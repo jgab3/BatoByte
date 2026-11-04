@@ -1,0 +1,42 @@
+CHANGES FROM YOUR SUBMITTED game.c / UPDATED HEADERS
+====================================================
+
+1. Kept the array-based Player.remaining_powers[3] structure you supplied.
+   No bitmask is used in the game engine; the TCP protocol converts its
+   private loadout bitmask to the array only at the server boundary.
+
+2. Kept your API signatures: game_init(), game_pick_round_power(),
+   resolve_turn() returning GameError, and TurnResult details.
+
+3. Reworked hit/landed tracking so landed[attacker] is always 1 ONLY
+   when that attack actually damages the opponent. Poison from the
+   attacker and Thorns from the defender then trigger correctly.
+   Countered/nullified attacks do not trigger these effects.
+
+4. Fixed Heal + Stall arithmetic: damage first, then Heal capped at
+   MAX_HP, THEN the stall penalty. The original code combined them
+   before applying the HP cap and could incorrectly restore too much.
+   TurnResult.healing now records actual HP restored (up to 30).
+
+5. Poison and Thorns start on the NEXT turn, last three ticks, and do
+   not count as move damage toward resetting the stall counter.
+
+6. Kept Double Damage / Double Defend / Guard Break / Full Counter
+   interactions and standardized their logic in resolve_moves().
+
+7. A mutual KO restarts the SAME round without consuming either
+   selected power. A normal KO awards one round point, consumes both
+   selected round powers, and prepares the next round.
+
+8. The authoritative server now uses the new array-based Game structures
+   and new resolve_turn() signature, and the clients submit moves privately.
+   Only activated powers are revealed in public turn results.
+
+9. Added reproducible gameplay tests and a real two-socket localhost test.
+
+10. Network behavior: sequential private prompts are collected on
+    the server. The engine resolves both submitted moves simultaneously.
+
+Known scope: terminal-based, POSIX sockets (Linux/WSL/macOS), one match
+for two clients. It does not implement Web UI, reconnection, encryption,
+or multiple concurrent lobbies.
