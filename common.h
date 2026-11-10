@@ -20,27 +20,45 @@
 #define LOADOUT_SIZE 3
 #define MAX_POWERS_PER_ROUND 1
 #define PLAYER_COUNT 2
+
 #define MAX_MESSAGE_LENGTH 512
 #define MAX_RELAY_LENGTH (MAX_MESSAGE_LENGTH + 16)
 
-typedef enum { MOVE_ATTACK, MOVE_DEFEND, MOVE_COUNTER, MOVE_COUNT } Move;
 typedef enum {
-    PW_NONE = -1, PW_HEAL, PW_DOUBLE_DAMAGE, PW_POISON,
-    PW_DOUBLE_DEFEND, PW_THORNS, PW_GUARD_BREAK, PW_FULL_COUNTER, PW_COUNT
+	MOVE_ATTACK,
+	MOVE_DEFEND,
+	MOVE_COUNTER,
+	MOVE_COUNT
+} Move;
+
+typedef enum {
+	PW_NONE = -1,
+	PW_HEAL,
+	PW_DOUBLE_DAMAGE,
+	PW_POISON,
+	PW_DOUBLE_DEFEND,
+	PW_THORNS,
+	PW_GUARD_BREAK,
+	PW_FULL_COUNTER,
+	PW_COUNT
 } Power;
+
 typedef struct {
-    int hp;
-    int round_wins;
-    Power remaining_powers[LOADOUT_SIZE];
-    Power round_power;
-    int power_activated;
-    int poison_turns;
-    int bleed_turns;
+	int hp;
+	int round_wins;
+	Power remaining_powers[LOADOUT_SIZE];
+	Power round_power;
+	int power_activated;
+	int poison_turns;
+	int bleed_turns;
 } Player;
+
 typedef struct {
-    Player players[PLAYER_COUNT];
-    int stall_turns;
-    int round_number;
-    int match_winner;
+	Player players[PLAYER_COUNT];
+	int stall_turns;
+	int stall_enabled;
+	int round_number;
+	int match_winner;
 } Game;
+
 #endif

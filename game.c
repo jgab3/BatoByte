@@ -1,197 +1,337 @@
-/* BatoByte rule engine. Compatible with the user's array-based headers. */
 #include "game.h"
+
 #include <stddef.h>
 
-/* Validate a power value before accessing any array. */
-static int valid_power(Power p) { return p >= PW_HEAL && p < PW_COUNT; }
-static int clamp(int hp) { return hp < 0 ? 0 : (hp > MAX_HP ? MAX_HP : hp); }
+GameError game_init(Game *game,
+					Power loadouts[PLAYER_COUNT][LOADOUT_SIZE])
+{
+	int player;
+	int power;
+	int other_power;
 
-/* Validate all three different powers for each player before changing game. */
-GameError game_init(Game *game, Power loadouts[PLAYER_COUNT][LOADOUT_SIZE]) {
-    if (!game || !loadouts) return GAME_ERR_ARGUMENT;
-    for (int p = 0; p < PLAYER_COUNT; ++p)
-        for (int j = 0; j < LOADOUT_SIZE; ++j) {
-            if (!valid_power(loadouts[p][j])) return GAME_ERR_LOADOUT;
-            for (int k = j + 1; k < LOADOUT_SIZE; ++k)
-                if (loadouts[p][j] == loadouts[p][k]) return GAME_ERR_LOADOUT;
-        }
-    *game = (Game){0};
-    game->round_number = 1;
-    game->match_winner = -1;
-    for (int p = 0; p < PLAYER_COUNT; ++p) {
-        game->players[p].hp = START_HP;
-        game->players[p].round_power = PW_NONE;
-        for (int j = 0; j < LOADOUT_SIZE; ++j)
-            game->players[p].remaining_powers[j] = loadouts[p][j];
-    }
-    return GAME_OK;
+	if (game == NULL || loadouts == NULL) {
+		return GAME_ERR_ARGUMENT;
+	}
+
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		for (power = 0; power < LOADOUT_SIZE; ++power) {
+			if (loadouts[player][power] < PW_HEAL ||
+				loadouts[player][power] >= PW_COUNT) {
+				return GAME_ERR_LOADOUT;
+			}
+			for (other_power = power + 1;
+				 other_power < LOADOUT_SIZE;
+				 ++other_power) {
+				if (loadouts[player][power] == loadouts[player][other_power]) {
+					return GAME_ERR_LOADOUT;
+				}
+			}
+		}
+	}
+
+	*game = (Game){0};
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		game->players[player].hp = START_HP;
+		game->players[player].round_power = PW_NONE;
+		for (power = 0; power < LOADOUT_SIZE; ++power) {
+			game->players[player].remaining_powers[power] =
+				loadouts[player][power];
+		}
+	}
+	game->stall_enabled = 1;
+	game->round_number = 1;
+	game->match_winner = -1;
+	return GAME_OK;
 }
 
-/* Pick a still-unused power at the beginning of each round. */
-GameError game_pick_round_power(Game *game, int player, Power power) {
-    if (!game || player < 0 || player >= PLAYER_COUNT) return GAME_ERR_ARGUMENT;
-    Player *p = &game->players[player];
-    if (game->match_winner >= 0 || !valid_power(power) || p->round_power != PW_NONE)
-        return GAME_ERR_POWER_PICK;
-    for (int j = 0; j < LOADOUT_SIZE; ++j) {
-        if (p->remaining_powers[j] == power) {
-            p->round_power = power;
-            p->power_activated = 0;
-            return GAME_OK;
-        }
-    }
-    return GAME_ERR_POWER_PICK;
+GameError game_init_basic(Game *game)
+{
+	int player;
+	int power;
+
+	if (game == NULL) {
+		return GAME_ERR_ARGUMENT;
+	}
+
+	*game = (Game){0};
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		game->players[player].hp = START_HP;
+		for (power = 0; power < LOADOUT_SIZE; ++power) {
+			game->players[player].remaining_powers[power] =
+				power == 0 ? PW_HEAL : PW_NONE;
+		}
+		game->players[player].round_power = PW_NONE;
+	}
+	game->stall_enabled = 0;
+	game->round_number = 1;
+	game->match_winner = -1;
+	return GAME_OK;
 }
 
-/* Powers must be activated on their compatible move. Heal works with any. */
-static int compatible(Power power, Move move) {
-    if (power == PW_HEAL) return 1;
-    if (power == PW_DOUBLE_DAMAGE || power == PW_POISON) return move == MOVE_ATTACK;
-    if (power == PW_DOUBLE_DEFEND || power == PW_THORNS) return move == MOVE_DEFEND;
-    if (power == PW_GUARD_BREAK || power == PW_FULL_COUNTER) return move == MOVE_COUNTER;
-    return 0;
+GameError game_pick_round_power(Game *game, int player, Power power)
+{
+	int i;
+	int found = 0;
+
+	if (game == NULL || player < 0 || player >= PLAYER_COUNT) {
+		return GAME_ERR_ARGUMENT;
+	}
+	if (game->match_winner >= 0 || power < PW_HEAL || power >= PW_COUNT) {
+		return GAME_ERR_POWER_PICK;
+	}
+	if (game->players[player].round_power != PW_NONE) {
+		return GAME_ERR_POWER_PICK;
+	}
+
+	for (i = 0; i < LOADOUT_SIZE; ++i) {
+		if (game->players[player].remaining_powers[i] == power) {
+			found = 1;
+		}
+	}
+	if (!found) {
+		return GAME_ERR_POWER_PICK;
+	}
+
+	game->players[player].round_power = power;
+	game->players[player].power_activated = 0;
+	return GAME_OK;
 }
 
-/* Apply each pair of moves exactly once, avoiding duplicated Attack/Attack. */
-static void resolve_moves(const Move moves[2], const Power use[2],
-                          int damage[2], int landed[2]) {
-    damage[0] = damage[1] = landed[0] = landed[1] = 0;
-    if (moves[0] == MOVE_ATTACK && moves[1] == MOVE_ATTACK) {
-        damage[0] = use[1] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : HIT_DMG;
-        damage[1] = use[0] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : HIT_DMG;
-        landed[0] = landed[1] = 1; /* landed indexes the ATTACKER */
-    } else {
-        for (int a = 0; a < 2; ++a) {
-            int d = 1 - a;
-            if (moves[a] != MOVE_ATTACK) continue;
-            if (moves[d] == MOVE_DEFEND) {
-                if (use[d] != PW_DOUBLE_DEFEND) {
-                    damage[d] = use[a] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : REDUCED_HIT;
-                    landed[a] = 1;
-                }
-            } else if (moves[d] == MOVE_COUNTER) {
-                damage[a] = use[a] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : HIT_DMG;
-                if (use[d] == PW_FULL_COUNTER) damage[a] *= FULL_COUNTER_MULTIPLIER;
-                /* Reflected attacks do not land and cannot poison defenders. */
-            }
-        }
-    }
-    /* Counter versus Defend: Guard Break and Double Defend interaction. */
-    for (int c = 0; c < 2; ++c) {
-        int d = 1 - c;
-        if (moves[c] != MOVE_COUNTER || moves[d] != MOVE_DEFEND) continue;
-        if (use[c] == PW_GUARD_BREAK) {
-            damage[use[d] == PW_DOUBLE_DEFEND ? c : d] = GUARD_BREAK_DMG;
-        } else if (use[d] == PW_DOUBLE_DEFEND) {
-            damage[c] = DOUBLE_DEFEND_COUNTER_DMG;
-        } else {
-            damage[c] = REDUCED_HIT;
-        }
-    }
+static void resolve_moves(const Move moves[PLAYER_COUNT],
+						  const Power use[PLAYER_COUNT],
+						  int damage[PLAYER_COUNT],
+						  int landed[PLAYER_COUNT])
+{
+	int player_zero_double_defend = use[0] == PW_DOUBLE_DEFEND;
+	int player_one_double_defend = use[1] == PW_DOUBLE_DEFEND;
+
+	damage[0] = 0;
+	damage[1] = 0;
+	landed[0] = 0;
+	landed[1] = 0;
+
+	if (moves[0] == MOVE_ATTACK && moves[1] == MOVE_ATTACK) {
+		damage[0] = use[1] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : HIT_DMG;
+		damage[1] = use[0] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : HIT_DMG;
+		landed[0] = damage[0] > 0;
+		landed[1] = damage[1] > 0;
+	} else if (moves[0] == MOVE_ATTACK && moves[1] == MOVE_DEFEND) {
+		if (!player_one_double_defend) {
+			damage[1] = use[0] == PW_DOUBLE_DAMAGE
+							? DOUBLE_DAMAGE_DMG
+							: REDUCED_HIT;
+			landed[1] = damage[1] > 0;
+		}
+	} else if (moves[1] == MOVE_ATTACK && moves[0] == MOVE_DEFEND) {
+		if (!player_zero_double_defend) {
+			damage[0] = use[1] == PW_DOUBLE_DAMAGE
+							? DOUBLE_DAMAGE_DMG
+							: REDUCED_HIT;
+			landed[0] = damage[0] > 0;
+		}
+	} else if (moves[0] == MOVE_ATTACK && moves[1] == MOVE_COUNTER) {
+		damage[0] = use[0] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : HIT_DMG;
+		if (use[1] == PW_FULL_COUNTER) {
+			damage[0] *= FULL_COUNTER_MULTIPLIER;
+		}
+	} else if (moves[1] == MOVE_ATTACK && moves[0] == MOVE_COUNTER) {
+		damage[1] = use[1] == PW_DOUBLE_DAMAGE ? DOUBLE_DAMAGE_DMG : HIT_DMG;
+		if (use[0] == PW_FULL_COUNTER) {
+			damage[1] *= FULL_COUNTER_MULTIPLIER;
+		}
+	} else if (moves[0] == MOVE_DEFEND && moves[1] == MOVE_COUNTER) {
+		if (player_zero_double_defend && use[1] == PW_GUARD_BREAK) {
+			damage[1] = REDUCED_HIT;
+		} else if (player_zero_double_defend) {
+			damage[1] = DOUBLE_DEFEND_COUNTER_DMG;
+		} else if (use[1] == PW_GUARD_BREAK) {
+			damage[0] = GUARD_BREAK_DMG;
+		} else {
+			damage[1] = REDUCED_HIT;
+		}
+	} else if (moves[1] == MOVE_DEFEND && moves[0] == MOVE_COUNTER) {
+		if (player_one_double_defend && use[0] == PW_GUARD_BREAK) {
+			damage[0] = REDUCED_HIT;
+		} else if (player_one_double_defend) {
+			damage[0] = DOUBLE_DEFEND_COUNTER_DMG;
+		} else if (use[0] == PW_GUARD_BREAK) {
+			damage[1] = GUARD_BREAK_DMG;
+		} else {
+			damage[0] = REDUCED_HIT;
+		}
+	}
 }
 
-/* A mutual KO restarts the SAME round without consuming either chosen power. */
-static void finish_round(Game *game, TurnResult *result) {
-    int winner = result->round_winner;
-    if (winner >= 0) {
-        ++game->players[winner].round_wins;
-        for (int p = 0; p < 2; ++p)
-            for (int j = 0; j < LOADOUT_SIZE; ++j)
-                if (game->players[p].remaining_powers[j] == game->players[p].round_power)
-                    game->players[p].remaining_powers[j] = PW_NONE;
-        if (game->players[winner].round_wins >= ROUNDS_TO_WIN) {
-            game->match_winner = winner;
-            result->outcome = TURN_MATCH_WON;
-        } else {
-            ++game->round_number;
-            result->outcome = TURN_ROUND_WON;
-        }
-    } else {
-        result->outcome = TURN_MUTUAL_KO;
-    }
-    for (int p = 0; p < 2; ++p) {
-        game->players[p].hp = (winner >= 0 && game->match_winner >= 0)
-                              ? game->players[p].hp : START_HP;
-        game->players[p].round_power = PW_NONE;
-        game->players[p].power_activated = 0;
-        game->players[p].poison_turns = 0;
-        game->players[p].bleed_turns = 0;
-    }
-    game->stall_turns = 0;
+static void finish_round(Game *game, TurnResult *result)
+{
+	int player;
+	int i;
+	int winner = result->round_winner;
+
+	if (winner < 0) {
+		for (player = 0; player < PLAYER_COUNT; ++player) {
+			game->players[player].hp = START_HP;
+			game->players[player].poison_turns = 0;
+			game->players[player].bleed_turns = 0;
+			game->players[player].round_power = PW_NONE;
+			game->players[player].power_activated = 0;
+		}
+		game->stall_turns = 0;
+		result->outcome = TURN_MUTUAL_KO;
+		return;
+	}
+
+	++game->players[winner].round_wins;
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		for (i = 0; i < LOADOUT_SIZE; ++i) {
+			if (game->players[player].remaining_powers[i] ==
+				game->players[player].round_power) {
+				game->players[player].remaining_powers[i] = PW_NONE;
+			}
+		}
+		game->players[player].round_power = PW_NONE;
+		game->players[player].power_activated = 0;
+		game->players[player].poison_turns = 0;
+		game->players[player].bleed_turns = 0;
+	}
+	game->stall_turns = 0;
+
+	if (game->players[winner].round_wins >= ROUNDS_TO_WIN) {
+		game->match_winner = winner;
+		result->outcome = TURN_MATCH_WON;
+	} else {
+		++game->round_number;
+		for (player = 0; player < PLAYER_COUNT; ++player) {
+			game->players[player].hp = START_HP;
+		}
+		result->outcome = TURN_ROUND_WON;
+	}
 }
 
-/* Process effects in official order and record each component separately. */
-GameError resolve_turn(Game *game, const Move moves[2],
-                       const Power use[2], TurnResult *result) {
-    if (!game || !moves || !use || !result || game->match_winner >= 0)
-        return GAME_ERR_ARGUMENT;
-    for (int p = 0; p < 2; ++p) {
-        const Player *pl = &game->players[p];
-        if (moves[p] < MOVE_ATTACK || moves[p] >= MOVE_COUNT)
-            return GAME_ERR_INVALID_MOVE;
-        if (!valid_power(pl->round_power)) return GAME_ERR_INVALID_ACTIVATION;
-        if (use[p] != PW_NONE &&
-            (use[p] != pl->round_power || pl->power_activated ||
-             !compatible(use[p], moves[p])))
-            return GAME_ERR_INVALID_ACTIVATION;
-    }
-    TurnResult next = {0};
-    next.round_winner = -1;
-    int damage[2], landed[2];
+GameError resolve_turn(Game *game,
+					   const Move moves[PLAYER_COUNT],
+					   const Power use[PLAYER_COUNT],
+					   TurnResult *result)
+{
+	TurnResult next = {0};
+	int move_damage[PLAYER_COUNT];
+	int tick_damage[PLAYER_COUNT] = {0, 0};
+	int landed[PLAYER_COUNT];
+	int player;
+	int stall_turn;
+	Move allowed_move;
+	int new_hp;
 
-    /* 1. Old poison/bleed ticks. New effects do not tick this turn. */
-    for (int p = 0; p < 2; ++p) {
-        Player *pl = &game->players[p];
-        if (pl->poison_turns > 0) { next.tick_damage[p] += POISON_DMG; --pl->poison_turns; }
-        if (pl->bleed_turns > 0) { next.tick_damage[p] += BLEED_DMG; --pl->bleed_turns; }
-    }
+	if (game == NULL || moves == NULL || use == NULL || result == NULL) {
+		return GAME_ERR_ARGUMENT;
+	}
+	if (game->match_winner >= 0) {
+		return GAME_ERR_ARGUMENT;
+	}
 
-    /* 2. Resolve move damage using actual activated powers only. */
-    resolve_moves(moves, use, damage, landed);
-    for (int p = 0; p < 2; ++p) next.move_damage[p] = damage[p];
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		Power power = game->players[player].round_power;
+		allowed_move = MOVE_COUNT;
 
-    /* 3. New Poison and Thorns apply only if the ATTACKER landed a hit. */
-    for (int a = 0; a < 2; ++a) {
-        int d = 1 - a;
-        if (moves[a] == MOVE_ATTACK && landed[a]) {
-            if (use[a] == PW_POISON) game->players[d].poison_turns = POISON_TURNS;
-            if (use[d] == PW_THORNS) game->players[a].bleed_turns = BLEED_TURNS;
-        }
-    }
+		if (moves[player] < MOVE_ATTACK || moves[player] >= MOVE_COUNT) {
+			return GAME_ERR_INVALID_MOVE;
+		}
+		if (power == PW_NONE) {
+			return GAME_ERR_INVALID_ACTIVATION;
+		}
+		if (power == PW_DOUBLE_DAMAGE || power == PW_POISON) {
+			allowed_move = MOVE_ATTACK;
+		} else if (power == PW_DOUBLE_DEFEND || power == PW_THORNS) {
+			allowed_move = MOVE_DEFEND;
+		} else if (power == PW_GUARD_BREAK || power == PW_FULL_COUNTER) {
+			allowed_move = MOVE_COUNTER;
+		}
+		if (use[player] != PW_NONE &&
+			(use[player] != power ||
+			 game->players[player].power_activated ||
+			 (power != PW_HEAL && moves[player] != allowed_move))) {
+			return GAME_ERR_INVALID_ACTIVATION;
+		}
+	}
 
-    /* 4. Apply tick and move damage, then capped Heal. */
-    for (int p = 0; p < 2; ++p) {
-        int hp = clamp(game->players[p].hp - next.tick_damage[p] - damage[p]);
-        if (use[p] == PW_HEAL) {
-            int after = clamp(hp + HEAL_AMT);
-            next.healing[p] = after - hp; /* Actual HP restored, not nominal 30. */
-            hp = after;
-        }
-        next.final_hp[p] = hp;
-    }
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		if (game->players[player].poison_turns > 0) {
+			tick_damage[player] += POISON_DMG;
+			--game->players[player].poison_turns;
+		}
+		if (game->players[player].bleed_turns > 0) {
+			tick_damage[player] += BLEED_DMG;
+			--game->players[player].bleed_turns;
+		}
+		next.tick_damage[player] = tick_damage[player];
+	}
 
-    /* 5. Stall counts move damage ONLY. Penalty occurs after Heal/cap. */
-    if (damage[0] == 0 && damage[1] == 0) ++game->stall_turns;
-    else game->stall_turns = 0;
-    if (game->stall_turns > STALL_FREE_TURNS)
-        for (int p = 0; p < 2; ++p) {
-            next.stall_penalty[p] = STALL_PENALTY;
-            next.final_hp[p] = clamp(next.final_hp[p] - STALL_PENALTY);
-        }
+	resolve_moves(moves, use, move_damage, landed);
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		next.move_damage[player] = move_damage[player];
+	}
 
-    /* 6. Commit both players' state and check round result. */
-    for (int p = 0; p < 2; ++p) {
-        game->players[p].hp = next.final_hp[p];
-        if (use[p] != PW_NONE) game->players[p].power_activated = 1;
-    }
-    if (next.final_hp[0] == 0 && next.final_hp[1] == 0) {
-        finish_round(game, &next);
-    } else if (next.final_hp[0] == 0 || next.final_hp[1] == 0) {
-        next.round_winner = next.final_hp[0] == 0 ? 1 : 0;
-        finish_round(game, &next);
-    } else {
-        next.outcome = TURN_CONTINUES;
-    }
-    *result = next; /* Keep final HP from completed turn even if round reset. */
-    return GAME_OK;
+	if (moves[0] == MOVE_ATTACK && use[0] == PW_POISON && landed[1]) {
+		game->players[1].poison_turns = POISON_TURNS;
+	}
+	if (moves[1] == MOVE_ATTACK && use[1] == PW_POISON && landed[0]) {
+		game->players[0].poison_turns = POISON_TURNS;
+	}
+	if (moves[1] == MOVE_DEFEND && use[1] == PW_THORNS && landed[1]) {
+		game->players[0].bleed_turns = BLEED_TURNS;
+	}
+	if (moves[0] == MOVE_DEFEND && use[0] == PW_THORNS && landed[0]) {
+		game->players[1].bleed_turns = BLEED_TURNS;
+	}
+
+	if (game->stall_enabled) {
+    		stall_turn = move_damage[0] == 0 && move_damage[1] == 0;
+    		if (stall_turn) {
+        		++game->stall_turns;
+        		if (game->stall_turns > STALL_FREE_TURNS) {
+           			 next.stall_penalty[0] = STALL_PENALTY;
+           			 next.stall_penalty[1] = STALL_PENALTY;
+       		 	}
+    		} else {
+        		game->stall_turns = 0;
+    		}
+	} else {
+    		game->stall_turns = 0;
+	}
+
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+    		if (use[player] == PW_HEAL) {
+        		next.healing[player] = HEAL_AMT;
+    		}
+
+    		new_hp = game->players[player].hp - tick_damage[player]
+             		- move_damage[player] - next.stall_penalty[player]
+             		+ next.healing[player];
+    		if (new_hp < 0) {
+        		new_hp = 0;
+    		}
+    		if (new_hp > MAX_HP) {
+        		new_hp = MAX_HP;
+    		}
+    		next.final_hp[player] = new_hp;
+	}
+
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		game->players[player].hp = next.final_hp[player];
+		if (use[player] != PW_NONE) {
+			game->players[player].power_activated = 1;
+		}
+	}
+
+	next.round_winner = -1;
+	next.outcome = TURN_CONTINUES;
+	if (game->players[0].hp == 0 && game->players[1].hp == 0) {
+		finish_round(game, &next);
+	} else if (game->players[0].hp == 0 || game->players[1].hp == 0) {
+		next.round_winner = game->players[0].hp == 0 ? 1 : 0;
+		finish_round(game, &next);
+	}
+
+	*result = next;
+	return GAME_OK;
 }

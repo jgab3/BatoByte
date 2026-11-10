@@ -1,200 +1,299 @@
-/* POSIX TCP BatoByte server. Compatible with the user's revised headers. */
-#define _POSIX_C_SOURCE 200809L
+#include "game.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
-#include <unistd.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
-#include "game.h"
-#define LINE_CAP 256
-#define DEFAULT_PORT 5000
+#include <unistd.h>
 
-/* Write a complete newline-framed protocol message to TCP stream. */
-static int sendline(int fd, const char *s) {
-    char msg[LINE_CAP];
-    int n = snprintf(msg, sizeof(msg), "%s\n", s);
-    if (n < 0 || n >= (int)sizeof(msg)) return 0;
-    for (int off = 0; off < n;) {
-        ssize_t k = send(fd, msg + off, (size_t)(n-off), 0);
-        if (k <= 0) return 0;
-        off += (int)k;
-    }
-    return 1;
+static const char *move_names[MOVE_COUNT] = {
+	"Attack", "Defend", "Counter"
+};
+
+static void die_with_error(const char *error_msg)
+{
+	printf("%s\n", error_msg);
+	exit(EXIT_FAILURE);
 }
 
-/* Receive one complete newline-framed message. */
-static int readline(int fd, char *s, size_t cap) {
-    size_t n = 0; char c;
-    for (;;) {
-        ssize_t k = recv(fd, &c, 1, 0);
-        if (k <= 0) return 0;
-        if (c == '\n') { s[n] = '\0'; return 1; }
-        if (c == '\r') continue;
-        if (n + 1 >= cap) return 0;
-        s[n++] = c;
-    }
+static int send_line(int socket_fd, const char *line)
+{
+	size_t sent = 0;
+	size_t length = strlen(line);
+
+	while (sent < length) {
+		ssize_t n = send(socket_fd, line + sent, length - sent, MSG_NOSIGNAL);
+		if (n <= 0) {
+			return 0;
+		}
+		sent += (size_t)n;
+	}
+	return 1;
 }
 
-/* Convert bitmask protocol loadout into the header's 3-Power array. */
-static int mask_to_loadout(unsigned mask, Power out[LOADOUT_SIZE]) {
-    int count = 0;
-    if ((mask >> PW_COUNT) != 0) return 0;
-    for (int i = 0; i < PW_COUNT; ++i)
-        if (mask & (1u << i)) {
-            if (count >= LOADOUT_SIZE) return 0;
-            out[count++] = (Power)i;
-        }
-    return count == LOADOUT_SIZE;
+static int receive_line(int socket_fd, char *line, size_t size)
+{
+	size_t used = 0;
+	char character;
+	ssize_t n;
+
+	while (used < size - 1) {
+		n = recv(socket_fd, &character, 1, 0);
+		if (n <= 0) {
+			return 0;
+		}
+		if (character == '\n') {
+			line[used] = '\0';
+			return 1;
+		}
+		line[used++] = character;
+	}
+	return 0;
 }
 
-/* Turn an array into a bitmask for the existing client's menu protocol. */
-static unsigned available_mask(const Player *p) {
-    unsigned mask = 0;
-    for (int i = 0; i < LOADOUT_SIZE; ++i)
-        if (p->remaining_powers[i] >= PW_HEAL && p->remaining_powers[i] < PW_COUNT)
-            mask |= 1u << p->remaining_powers[i];
-    return mask;
+static int read_choice(const char *prompt, int minimum, int maximum,
+					   int *choice)
+{
+	char input[100];
+	char *end;
+	long number;
+
+	while (1) {
+		printf("%s", prompt);
+		fflush(stdout);
+		if (fgets(input, sizeof(input), stdin) == NULL) {
+			return 0;
+		}
+		number = strtol(input, &end, 10);
+		while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') {
+			++end;
+		}
+		if (end != input && *end == '\0' && number >= minimum &&
+			number <= maximum) {
+			*choice = (int)number;
+			return 1;
+		}
+		printf("Enter a number from %d to %d.\n", minimum, maximum);
+	}
 }
 
-/* Each player privately sends three distinct selected powers. */
-static int prompt_loadout(int fd, Power out[LOADOUT_SIZE]) {
-    char line[LINE_CAP], extra;
-    unsigned mask;
-    for (;;) {
-        if (!sendline(fd, "LOADOUT") || !readline(fd, line, sizeof(line))) return 0;
-        if (sscanf(line, "%u%c", &mask, &extra) == 1 && mask_to_loadout(mask, out))
-            return 1;
-        if (!sendline(fd, "ERROR|Select exactly three different powers.")) return 0;
-    }
+static int choose_move(const int hp[PLAYER_COUNT], int heal_available,
+                       Move *move, int *heal)
+{
+	int choice;
+	int heal_choice;
+
+	printf("\nYour HP: %d | Player 2 HP: %d\n", hp[0], hp[1]);
+	printf("1. Attack\n2. Defend\n3. Counter\n");
+	if (!read_choice("Choose your move: ", 1, MOVE_COUNT, &choice)) {
+		return 0;
+	}
+	*move = (Move)(choice - 1);
+	*heal = 0;
+	if (heal_available) {
+		if (!read_choice("Use Heal this turn? (1 yes, 2 no): ", 1, 2,
+					 &heal_choice)) {
+			return 0;
+		}
+		*heal = heal_choice == 1;
+	}
+	return 1;
 }
 
-/* Prompt a player for one still-available round power. */
-static int prompt_round_power(int fd, const Player *player, Power *out) {
-    char line[LINE_CAP], msg[LINE_CAP], extra;
-    int selection;
-    unsigned mask = available_mask(player);
-    snprintf(msg, sizeof(msg), "POWER|%u", mask);
-    for (;;) {
-        if (!sendline(fd, msg) || !readline(fd, line, sizeof(line))) return 0;
-        if (sscanf(line, "%d%c", &selection, &extra) == 1 &&
-            selection >= 1 && selection <= PW_COUNT && (mask & (1u << (selection-1)))) {
-            *out = (Power)(selection-1);
-            return 1;
-        }
-        if (!sendline(fd, "ERROR|Power unavailable; choose again.")) return 0;
-    }
+static int get_move(const char *line, Move *move, int *heal)
+{
+	int move_choice;
+	int heal_choice;
+	char extra;
+
+	if (sscanf(line, "MOVE %d %d %c", &move_choice, &heal_choice, &extra) != 2 ||
+		move_choice < 1 || move_choice > MOVE_COUNT ||
+		(heal_choice != 0 && heal_choice != 1)) {
+		return 0;
+	}
+	*move = (Move)(move_choice - 1);
+	*heal = heal_choice;
+	return 1;
 }
 
-/* Validate power compatibility before sending choices to the engine. */
-static int compatible(Power pw, Move move) {
-    return pw == PW_HEAL ||
-      ((pw == PW_DOUBLE_DAMAGE || pw == PW_POISON) && move == MOVE_ATTACK) ||
-      ((pw == PW_DOUBLE_DEFEND || pw == PW_THORNS) && move == MOVE_DEFEND) ||
-      ((pw == PW_GUARD_BREAK || pw == PW_FULL_COUNTER) && move == MOVE_COUNTER);
+static void print_result(const Move moves[PLAYER_COUNT],
+						 const int heal[PLAYER_COUNT],
+						 const int damage[PLAYER_COUNT],
+						 const int hp[PLAYER_COUNT])
+{
+	int player;
+
+	printf("\nYou used %s!\n", move_names[moves[0]]);
+	printf("Player 2 used %s!\n", move_names[moves[1]]);
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		if (damage[player] > 0) {
+			printf("%s took %d damage.\n", player == 0 ? "You" : "Player 2", damage[player]);
+		}
+		if (heal[player]) {
+			printf("%s used Heal.\n", player == 0 ? "You" : "Player 2");
+		}
+		printf("%s HP: %d\n", player == 0 ? "Your" : "Player 2", hp[player]);
+	}
 }
 
-/* Obtain move and optional power activation without revealing to opponent. */
-static int prompt_turn(int fd, const Game *g, int id, int turn,
-                       Move *move, Power *use) {
-    char line[LINE_CAP], msg[LINE_CAP], extra;
-    int m, activate;
-    const Player *p = &g->players[id];
-    const Player *other = &g->players[1-id];
-    snprintf(msg, sizeof(msg), "TURN|%d|%d|%d|%d|%d|%d", g->round_number,
-             turn, p->hp, other->hp, (int)p->round_power, p->power_activated);
-    for (;;) {
-        if (!sendline(fd, msg) || !readline(fd, line, sizeof(line))) return 0;
-        if (sscanf(line, "%d %d%c", &m, &activate, &extra) == 2 &&
-            m >= 1 && m <= MOVE_COUNT && (activate == 0 || activate == 1) &&
-            (!activate || (!p->power_activated && compatible(p->round_power, (Move)(m-1))))) {
-            *move = (Move)(m-1);
-            *use = activate ? p->round_power : PW_NONE;
-            return 1;
-        }
-        if (!sendline(fd, "ERROR|Invalid move or incompatible/used power.")) return 0;
-    }
-}
+int main(int argc, char *argv[])
+{
+	int server_sock;
+	int client_sock;
+	int port_no;
+	int option = 1;
+	int length;
+	int hp[PLAYER_COUNT];
+	int heal[PLAYER_COUNT];
+	int damage[PLAYER_COUNT];
+	int match_winner = -1;
+	int player;
+	socklen_t client_size;
+	struct sockaddr_in server_addr;
+	struct sockaddr_in client_addr;
+	Move moves[PLAYER_COUNT];
+	Power use[PLAYER_COUNT];
+	Game game;
+	TurnResult result;
+	GameError game_error;
+	char line[MAX_MESSAGE_LENGTH];
 
-/* Results are broadcast only after both players have submitted a turn. */
-static int send_result(int client[2], const Game *g, const TurnResult *r,
-                       const Move moves[2], const Power use[2]) {
-    char msg[LINE_CAP];
-    int finished = r->outcome != TURN_CONTINUES;
-    int winner = r->outcome == TURN_MUTUAL_KO ? -2 : r->round_winner;
-    snprintf(msg, sizeof(msg),
-      "RESULT|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d",
-      r->final_hp[0], r->final_hp[1],
-      g->players[0].round_wins, g->players[1].round_wins,
-      (int)moves[0], (int)moves[1], (int)use[0], (int)use[1],
-      r->tick_damage[0], r->tick_damage[1],
-      r->move_damage[0], r->move_damage[1],
-      r->healing[0], r->healing[1],
-      r->stall_penalty[0], r->stall_penalty[1],
-      winner, g->round_number, g->match_winner, finished);
-    return sendline(client[0], msg) && sendline(client[1], msg);
-}
+	if (argc != 2) {
+		printf("Usage: %s port_no\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+	if (game_init_basic(&game) != GAME_OK) {
+		die_with_error("Error: game initialization failed.");
+	}
+	for (player = 0; player < PLAYER_COUNT; ++player) {
+		if (game_pick_round_power(&game, player, PW_HEAL) != GAME_OK) {
+			die_with_error("Error: could not select Heal.");
+		}
+	}
 
-int main(int argc, char **argv) {
-    signal(SIGPIPE, SIG_IGN);
-    int port = DEFAULT_PORT;
-    if (argc > 2) { fprintf(stderr, "Usage: %s [port]\n", argv[0]); return 1; }
-    if (argc == 2) {
-        char *end; long number = strtol(argv[1], &end, 10);
-        if (*end || number < 1024 || number > 65535) return 1;
-        port = (int)number;
-    }
-    int listener = socket(AF_INET, SOCK_STREAM, 0), client[2] = {-1,-1};
-    if (listener < 0) { perror("socket"); return 1; }
-    int reuse = 1;
-    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-    struct sockaddr_in address = {0};
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = htonl(INADDR_ANY);
-    address.sin_port = htons((unsigned short)port);
-    if (bind(listener, (struct sockaddr *)&address, sizeof(address)) < 0 ||
-        listen(listener, 2) < 0) {
-        perror("bind/listen"); close(listener); return 1;
-    }
-    printf("BatoByte server listening on port %d.\n", port); fflush(stdout);
-    for (int i = 0; i < 2; ++i) {
-        client[i] = accept(listener, NULL, NULL);
-        if (client[i] < 0) goto cleanup;
-        char msg[32];
-        snprintf(msg, sizeof(msg), "WELCOME|%d", i+1);
-        if (!sendline(client[i], msg)) goto cleanup;
-        printf("Player %d connected.\n", i+1); fflush(stdout);
-    }
-    close(listener); listener = -1;
-    Power loadout[2][LOADOUT_SIZE];
-    if (!prompt_loadout(client[0], loadout[0]) ||
-        !prompt_loadout(client[1], loadout[1])) goto cleanup;
-    Game game;
-    if (game_init(&game, loadout) != GAME_OK) goto cleanup;
-    while (game.match_winner < 0) {
-        for (int i = 0; i < 2; ++i) {
-            Power pw;
-            if (!prompt_round_power(client[i], &game.players[i], &pw) ||
-                game_pick_round_power(&game, i, pw) != GAME_OK) goto cleanup;
-        }
-        int turn = 0;
-        for (;;) {
-            Move moves[2]; Power use[2]; TurnResult result;
-            ++turn;
-            if (!prompt_turn(client[0], &game, 0, turn, &moves[0], &use[0]) ||
-                !prompt_turn(client[1], &game, 1, turn, &moves[1], &use[1])) goto cleanup;
-            if (resolve_turn(&game, moves, use, &result) != GAME_OK) goto cleanup;
-            if (!send_result(client, &game, &result, moves, use)) goto cleanup;
-            if (result.outcome != TURN_CONTINUES) break;
-        }
-    }
-    printf("Match winner: Player %d.\n", game.match_winner+1);
-cleanup:
-    for (int i = 0; i < 2; ++i) if (client[i] >= 0) {
-        sendline(client[i], "CLOSE"); close(client[i]);
-    }
-    if (listener >= 0) close(listener);
-    return 0;
+	printf("Server starting ...\n");
+	server_sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_sock < 0) {
+		die_with_error("Error: socket() Failed.");
+	}
+	if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &option,
+			   sizeof(option)) < 0) {
+		die_with_error("Error: setsockopt() Failed.");
+	}
+	bzero((char *)&server_addr, sizeof(server_addr));
+	port_no = atoi(argv[1]);
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_addr.s_addr = INADDR_ANY;
+	server_addr.sin_port = htons((unsigned short)port_no);
+	if (bind(server_sock, (struct sockaddr *)&server_addr,
+			 sizeof(server_addr)) < 0) {
+		die_with_error("Error: bind() Failed.");
+	}
+	if (listen(server_sock, 1) < 0) {
+		die_with_error("Error: listen() Failed.");
+	}
+	printf("Server listening to port %d ...\n", port_no);
+	printf("Waiting for Player 2 to connect ...\n");
+
+	client_size = sizeof(client_addr);
+	client_sock = accept(server_sock, (struct sockaddr *)&client_addr,
+					 &client_size);
+	if (client_sock < 0) {
+		die_with_error("Error: accept() Failed.");
+	}
+	printf("Player 2 successfully connected ...\n");
+	close(server_sock);
+	if (!send_line(client_sock, "READY 2\n")) {
+		die_with_error("Error: send() Failed.");
+	}
+
+	while (match_winner < 0) {
+		while (1) {
+			length = snprintf(line, sizeof(line), "TURN %d %d %d\n",
+						  game.players[0].hp, game.players[1].hp,
+						  !game.players[1].power_activated);
+			
+			hp[0] = game.players[0].hp;
+			hp[1] = game.players[1].hp;
+
+			if (length < 0 || (size_t)length >= sizeof(line) ||
+				!send_line(client_sock, line) ||
+				!choose_move(hp, !game.players[0].power_activated,
+             				     &moves[0], &heal[0])) {
+				printf("Input ended or Player 2 disconnected.\n");
+				close(client_sock);
+				return EXIT_FAILURE;
+			}
+			printf("Waiting for Player 2 to choose a move ...\n");
+			fflush(stdout);
+			if (!receive_line(client_sock, line, sizeof(line))) {
+				printf("Player 2 disconnected.\n");
+				close(client_sock);
+				return EXIT_FAILURE;
+			}
+			if (!get_move(line, &moves[1], &heal[1]) ||
+				(heal[1] && game.players[1].power_activated)) {
+				if (!send_line(client_sock, "RETRY\n")) {
+					die_with_error("Error: send() Failed.");
+				}
+				continue;
+			}
+			break;
+		}
+
+		for (player = 0; player < PLAYER_COUNT; ++player) {
+			use[player] = heal[player] ? PW_HEAL : PW_NONE;
+		}
+		game_error = resolve_turn(&game, moves, use, &result);
+		if (game_error != GAME_OK) {
+			if (!send_line(client_sock, "RETRY\n")) {
+				die_with_error("Error: send() Failed.");
+			}
+			continue;
+		}
+		for (player = 0; player < PLAYER_COUNT; ++player) {
+			damage[player] = result.tick_damage[player] +
+						 result.move_damage[player] +
+						 result.stall_penalty[player];
+			hp[player] = result.final_hp[player];
+		}
+
+		if (result.outcome == TURN_MUTUAL_KO) {
+			match_winner = 0;
+		} else if (result.outcome == TURN_ROUND_WON ||
+				   result.outcome == TURN_MATCH_WON) {
+			match_winner = result.round_winner + 1;
+		}
+		print_result(moves, heal, damage, hp);
+		length = snprintf(line, sizeof(line),
+			"RESULT %d %d %d %d %d %d %d %d\n",
+			moves[0], moves[1], heal[0], heal[1], damage[0], damage[1],
+			hp[0], hp[1]);
+		if (length < 0 || (size_t)length >= sizeof(line) ||
+			!send_line(client_sock, line)) {
+			die_with_error("Error: send() Failed.");
+		}
+		if (match_winner >= 0) {
+			length = snprintf(line, sizeof(line), "END %d\n", match_winner);
+			if (length < 0 || (size_t)length >= sizeof(line) ||
+				!send_line(client_sock, line)) {
+				die_with_error("Error: send() Failed.");
+			}
+			break;
+		}
+		if (!send_line(client_sock, "CONTINUE\n")) {
+			die_with_error("Error: send() Failed.");
+		}
+	}
+
+	if (match_winner == 0) {
+		printf("The match ends in a draw.\n");
+	} else {
+		printf("Player %d wins the match!\n", match_winner);
+	}
+	printf("Closing connection ...\n");
+	close(client_sock);
+	return EXIT_SUCCESS;
 }
