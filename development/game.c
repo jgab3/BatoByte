@@ -54,15 +54,22 @@ GameError game_init_basic(Game *game)
 	}
 
 	*game = (Game){0};
-	for (player = 0; player < PLAYER_COUNT; ++player) {
+	for (player = 0; player < PLAYER_COUNT; ++player) 
+	{
 		game->players[player].hp = START_HP;
-		for (power = 0; power < LOADOUT_SIZE; ++power) {
-			game->players[player].remaining_powers[power] =
-				power == 0 ? PW_HEAL : PW_NONE;
+		for (power = 0; power < LOADOUT_SIZE; ++power) 
+		{
+			if (power == 0) {
+				game->players[player].remaining_powers[power] = PW_HEAL;
+			} else if (power == 1) {
+				game->players[player].remaining_powers[power] = PW_DOUBLE_DAMAGE;
+			} else {
+				game->players[player].remaining_powers[power] = PW_NONE;
+			}
 		}
 		game->players[player].round_power = PW_NONE;
 	}
-	game->stall_enabled = 0;
+	game->stall_enabled = 1;
 	game->round_number = 1;
 	game->match_winner = -1;
 	return GAME_OK;

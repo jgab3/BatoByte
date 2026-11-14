@@ -12,6 +12,16 @@ static const char *move_names[MOVE_COUNT] = {
 	"Attack", "Defend", "Counter"
 };
 
+static const char *power_names[PW_COUNT] = {
+	"Heal",
+	"Double Damage",
+	"Poison",
+	"Double Defend",
+	"Thorns",
+	"Guard Break",
+	"Full Counter"
+};
+
 static void die_with_error(const char *error_msg)
 {
 	printf("%s\n", error_msg);
@@ -79,10 +89,10 @@ static int read_choice(const char *prompt, int minimum, int maximum,
 	}
 }
 
-static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_COUNT], int heal_available, Move *move, int *heal)
+static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_COUNT], Power round_power, int power_activated, Move *move, Power *use)
 {
 	int choice;
-	int heal_choice;
+	int activate = 2;
 
 	printf("\nRound wins: You: %d | Player 2: %d\n", round_wins[0], round_wins[1]);
 	printf("Your HP: %d | Player 2 HP: %d\n", hp[0], hp[1]);
@@ -91,37 +101,76 @@ static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_C
 		return 0;
 	}
 	*move = (Move)(choice - 1);
-	*heal = 0;
-	if (heal_available) {
-		if (!read_choice("Use Heal this turn? (1 yes, 2 no): ", 1, 2,
-					 &heal_choice)) {
+	*use = PW_NONE;
+	if (round_power != PW_NONE && !power_activated && (round_power != PW_DOUBLE_DAMAGE || *move == MOVE_ATTACK)) 
+	{
+		printf("Your round power: %s\n", power_names[round_power]);
+		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &activate)) 
+		{
 			return 0;
 		}
-		*heal = heal_choice == 1;
+		if (activate == 1) {
+			*use = round_power;
+		}
 	}
 	return 1;
 }
 
-static int get_move(const char *line, Move *move, int *heal)
+static int get_move(const char *line, Move *move, Power *use)
 {
 	int move_choice;
-	int heal_choice;
+	int power_code;
 	char extra;
 
-	if (sscanf(line, "MOVE %d %d %c", &move_choice, &heal_choice, &extra) != 2 ||
-		move_choice < 1 || move_choice > MOVE_COUNT ||
-		(heal_choice != 0 && heal_choice != 1)) {
+	if (sscanf(line, "MOVE %d %d %c", &move_choice, &power_code, &extra) != 2 || move_choice < 1 || move_choice > MOVE_COUNT || power_code < 0 || power_code > PW_COUNT) 
+	{
 		return 0;
 	}
 	*move = (Move)(move_choice - 1);
-	*heal = heal_choice;
+	*use = power_code == 0 ? PW_NONE : (Power)(power_code - 1);
 	return 1;
 }
 
-static void print_result(const Move moves[PLAYER_COUNT],
-						 const int heal[PLAYER_COUNT],
-						 const int damage[PLAYER_COUNT],
-						 const int hp[PLAYER_COUNT])
+static int choose_round_power(Game *game)
+{
+	int slot;
+	int choice;
+	Power available;
+
+	printf("\nChoose your power for this round:\n");
+	for (slot = 0; slot < LOADOUT_SIZE; ++slot) 
+	{
+		available = game->players[0].remaining_powers[slot];
+		if (available != PW_NONE) 
+		{
+			printf("%d. %s\n", available + 1, power_names[available]);
+		}
+	}
+
+	while (1) {
+		if (!read_choice("Choose a power: ", 1, PW_COUNT, &choice)) {
+			return 0;
+		}
+		if (game_pick_round_power(
+				game, 0, (Power)(choice - 1)) == GAME_OK) {
+			return 1;
+		}
+		printf("That power is unavailable. Choose one shown above.\n");
+	}
+}
+
+static int send_pick_prompt(int client_sock, const Game *game)
+{
+	const Player *client = &game->players[1];
+	char line[MAX_MESSAGE_LENGTH];
+	int length;
+
+	length = snprintf(line, sizeof(line), "PICK %d %d %d\n", client->remaining_powers[0] + 1, client->remaining_powers[1] + 1, client->remaining_powers[2] + 1);
+
+	return length >= 0 && (size_t)length < sizeof(line) && send_line(client_sock, line);
+}
+
+static void print_result(const Move moves[PLAYER_COUNT], const Power use[PLAYER_COUNT], const int damage[PLAYER_COUNT], const int hp[PLAYER_COUNT])
 {
 	int player;
 
@@ -131,8 +180,8 @@ static void print_result(const Move moves[PLAYER_COUNT],
 		if (damage[player] > 0) {
 			printf("%s took %d damage.\n", player == 0 ? "You" : "Player 2", damage[player]);
 		}
-		if (heal[player]) {
-			printf("%s used Heal.\n", player == 0 ? "You" : "Player 2");
+		if (use[player] != PW_NONE) {
+			printf("%s activated their power.\n", player == 0 ? "You" : "Player 2");
 		}
 		printf("%s HP: %d\n", player == 0 ? "Your" : "Player 2", hp[player]);
 	}
@@ -146,11 +195,11 @@ int main(int argc, char *argv[])
 	int option = 1;
 	int length;
 	int hp[PLAYER_COUNT];
-	int heal[PLAYER_COUNT];
 	int damage[PLAYER_COUNT];
 	int round_wins[PLAYER_COUNT];
 	int match_winner = -1;
 	int player;
+	int need_power_pick = 1;
 	socklen_t client_size;
 	struct sockaddr_in server_addr;
 	struct sockaddr_in client_addr;
@@ -167,11 +216,6 @@ int main(int argc, char *argv[])
 	}
 	if (game_init_basic(&game) != GAME_OK) {
 		die_with_error("Error: game initialization failed.");
-	}
-	for (player = 0; player < PLAYER_COUNT; ++player) {
-		if (game_pick_round_power(&game, player, PW_HEAL) != GAME_OK) {
-			die_with_error("Error: could not select Heal.");
-		}
 	}
 
 	printf("Server starting ...\n");
@@ -212,17 +256,59 @@ int main(int argc, char *argv[])
 
 	while (match_winner < 0) {
 		while (1) {
-			length = snprintf(line, sizeof(line), "TURN %d %d %d %d %d\n", game.players[0].hp, game.players[1].hp, !game.players[1].power_activated, game.players[0].round_wins, game.players[1].round_wins);
 			
+			if (need_power_pick) {
+				int power_choice;
+				char extra;
+
+				if (!send_pick_prompt(client_sock, &game)) {
+					die_with_error("Error: send() Failed.");
+				}
+
+				if (!choose_round_power(&game)) {
+					printf("Input ended while choosing a power.\n");
+					close(client_sock);
+					return EXIT_FAILURE;
+				}
+
+				printf("Waiting for Player 2 to choose a power ...\n");
+				fflush(stdout);
+
+				while (1) {
+					if (!receive_line(client_sock, line, sizeof(line))) {
+						printf("Player 2 disconnected during power selection.\n");
+						close(client_sock);
+						return EXIT_FAILURE;
+					}
+
+					if (sscanf(line, "PICK %d %c", &power_choice, &extra) == 1 &&
+						power_choice >= 1 && power_choice <= PW_COUNT &&
+						game_pick_round_power(
+							&game, 1, (Power)(power_choice - 1)) == GAME_OK) {
+						if (!send_line(client_sock, "OK\n")) {
+							die_with_error("Error: send() Failed.");
+						}
+						break;
+					}
+
+					if (!send_line(client_sock, "RETRY\n") ||
+						!send_pick_prompt(client_sock, &game)) {
+						die_with_error("Error: send() Failed.");
+					}
+				}
+
+				need_power_pick = 0;
+			}
+
 			hp[0] = game.players[0].hp;
 			hp[1] = game.players[1].hp;
-
 			round_wins[0] = game.players[0].round_wins;
 			round_wins[1] = game.players[1].round_wins;
 
-			if (length < 0 || (size_t)length >= sizeof(line) ||
-				!send_line(client_sock, line) ||
-				!choose_move(hp, round_wins, !game.players[0].power_activated, &moves[0], &heal[0])) {
+			length = snprintf(line, sizeof(line), "TURN %d %d %d %d %d %d\n", hp[0], hp[1],  game.players[1].round_power + 1, game.players[1].power_activated, round_wins[0], round_wins[1]);
+
+			if (length < 0 || (size_t)length >= sizeof(line) || !send_line(client_sock, line) || !choose_move(hp, round_wins, game.players[0].round_power, game.players[0].power_activated, &moves[0], &use[0])) 
+			{
 				printf("Input ended or Player 2 disconnected.\n");
 				close(client_sock);
 				return EXIT_FAILURE;
@@ -234,8 +320,8 @@ int main(int argc, char *argv[])
 				close(client_sock);
 				return EXIT_FAILURE;
 			}
-			if (!get_move(line, &moves[1], &heal[1]) ||
-				(heal[1] && game.players[1].power_activated)) {
+			if (!get_move(line, &moves[1], &use[1]) ||
+				(use[1] != PW_NONE && game.players[1].power_activated)) {
 				if (!send_line(client_sock, "RETRY\n")) {
 					die_with_error("Error: send() Failed.");
 				}
@@ -244,9 +330,6 @@ int main(int argc, char *argv[])
 			break;
 		}
 
-		for (player = 0; player < PLAYER_COUNT; ++player) {
-			use[player] = heal[player] ? PW_HEAL : PW_NONE;
-		}
 		game_error = resolve_turn(&game, moves, use, &result);
 		if (game_error != GAME_OK) {
 			if (!send_line(client_sock, "RETRY\n")) {
@@ -261,28 +344,21 @@ int main(int argc, char *argv[])
 			hp[player] = result.final_hp[player];
 		}
 
-		if (result.outcome == TURN_MATCH_WON) {
+		if (result.outcome == TURN_MATCH_WON) 
+		{
 			match_winner = result.round_winner + 1;
-		} else if (result.outcome == TURN_ROUND_WON) {
-			for (player = 0; player < PLAYER_COUNT; ++player) {
-				game.players[player].remaining_powers[0] = PW_HEAL;
-			}
 		}
 
-		if (result.outcome == TURN_ROUND_WON ||
-			result.outcome == TURN_MUTUAL_KO) {
-			for (player = 0; player < PLAYER_COUNT; ++player) {
-				if (game_pick_round_power(&game, player, PW_HEAL) != GAME_OK) {
-					die_with_error("Error: could not select Heal.");
-				}
-			}
+		if (result.outcome == TURN_ROUND_WON || result.outcome == TURN_MUTUAL_KO) 
+		{
+			need_power_pick = 1;
 		}
 
-		print_result(moves, heal, damage, hp);
+		print_result(moves, use, damage, hp);
 		if (result.round_winner >= 0) {
 			printf("Player %d won the round!\n", result.round_winner + 1);
 		}
-		length = snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d\n", moves[0], moves[1], heal[0], heal[1], damage[0], damage[1], hp[0], hp[1], result.round_winner + 1);
+		length = snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d\n", moves[0], moves[1], use[0] + 1, use[1] + 1, damage[0], damage[1], hp[0], hp[1], result.round_winner + 1);
 		if (length < 0 || (size_t)length >= sizeof(line) ||
 			!send_line(client_sock, line)) {
 			die_with_error("Error: send() Failed.");
