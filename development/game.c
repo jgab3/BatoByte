@@ -44,37 +44,6 @@ GameError game_init(Game *game,
 	return GAME_OK;
 }
 
-GameError game_init_basic(Game *game)
-{
-	int player;
-	int power;
-
-	if (game == NULL) {
-		return GAME_ERR_ARGUMENT;
-	}
-
-	*game = (Game){0};
-	for (player = 0; player < PLAYER_COUNT; ++player) 
-	{
-		game->players[player].hp = START_HP;
-		for (power = 0; power < LOADOUT_SIZE; ++power) 
-		{
-			if (power == 0) {
-				game->players[player].remaining_powers[power] = PW_HEAL;
-			} else if (power == 1) {
-				game->players[player].remaining_powers[power] = PW_DOUBLE_DAMAGE;
-			} else {
-				game->players[player].remaining_powers[power] = PW_NONE;
-			}
-		}
-		game->players[player].round_power = PW_NONE;
-	}
-	game->stall_enabled = 1;
-	game->round_number = 1;
-	game->match_winner = -1;
-	return GAME_OK;
-}
-
 GameError game_pick_round_power(Game *game, int player, Power power)
 {
 	int i;

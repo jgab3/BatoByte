@@ -29,16 +29,10 @@ typedef struct {
 	int final_hp[PLAYER_COUNT];
 } TurnResult;
 
-GameError game_init(Game *game,
-					Power loadouts[PLAYER_COUNT][LOADOUT_SIZE]);
-
-GameError game_init_basic(Game *game);
+GameError game_init(Game *game, Power loadouts[PLAYER_COUNT][LOADOUT_SIZE]);
 
 GameError game_pick_round_power(Game *game, int player, Power power);
 
-GameError resolve_turn(Game *game,
-					   const Move moves[PLAYER_COUNT],
-					   const Power use[PLAYER_COUNT],
-					   TurnResult *result);
+GameError resolve_turn(Game *game, const Move moves[PLAYER_COUNT], const Power use[PLAYER_COUNT], TurnResult *result);
 
 #endif

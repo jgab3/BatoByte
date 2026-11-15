@@ -89,6 +89,111 @@ static int read_choice(const char *prompt, int minimum, int maximum,
 	}
 }
 
+static int power_is_available(Power power)
+{
+	switch (power) {
+	case PW_HEAL:
+	case PW_DOUBLE_DAMAGE:
+	case PW_DOUBLE_DEFEND:
+	case PW_GUARD_BREAK:
+	case PW_FULL_COUNTER:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static void print_power_options(void)
+{
+	Power power;
+
+	for (power = PW_HEAL; power < PW_COUNT;
+		 power = (Power)(power + 1)) {
+		printf("%d. %s%s\n",
+			   power + 1,
+			   power_names[power],
+			   power_is_available(power) ? "" : " (unavailable)");
+	}
+}
+
+static int choose_loadout(Power loadout[LOADOUT_SIZE])
+{
+	int slot;
+	int previous;
+	int choice;
+	int duplicate;
+	Power selected;
+
+	for (slot = 0; slot < LOADOUT_SIZE; ++slot) {
+		while (1) {
+			printf("\nChoose power %d of %d:\n",
+				   slot + 1, LOADOUT_SIZE);
+			print_power_options();
+
+			if (!read_choice("Choose a power: ",
+							 1, PW_COUNT, &choice)) {
+				return 0;
+			}
+
+			selected = (Power)(choice - 1);
+			if (!power_is_available(selected)) {
+				printf("%s is unavailable right now. Choose another.\n",
+					   power_names[selected]);
+				continue;
+			}
+
+			duplicate = 0;
+			for (previous = 0; previous < slot; ++previous) {
+				if (loadout[previous] == selected) {
+					duplicate = 1;
+				}
+			}
+			if (duplicate) {
+				printf("Choose each power only once.\n");
+				continue;
+			}
+
+			loadout[slot] = selected;
+			break;
+		}
+	}
+	return 1;
+}
+
+static int get_loadout(const char *line, Power loadout[LOADOUT_SIZE])
+{
+	int codes[LOADOUT_SIZE];
+	int slot;
+	int previous;
+	char extra;
+	Power selected;
+
+	if (sscanf(line, "LOADOUT %d %d %d %c",
+			   &codes[0], &codes[1], &codes[2], &extra) != 3) {
+		return 0;
+	}
+
+	for (slot = 0; slot < LOADOUT_SIZE; ++slot) {
+		if (codes[slot] < 1 || codes[slot] > PW_COUNT) {
+			return 0;
+		}
+
+		selected = (Power)(codes[slot] - 1);
+		if (!power_is_available(selected)) {
+			return 0;
+		}
+
+		for (previous = 0; previous < slot; ++previous) {
+			if (loadout[previous] == selected) {
+				return 0;
+			}
+		}
+		loadout[slot] = selected;
+	}
+
+	return 1;
+}
+
 static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_COUNT], Power round_power, int power_activated, Move *move, Power *use)
 {
 	int choice;
@@ -102,7 +207,7 @@ static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_C
 	}
 	*move = (Move)(choice - 1);
 	*use = PW_NONE;
-	if (round_power != PW_NONE && !power_activated && (round_power != PW_DOUBLE_DAMAGE || *move == MOVE_ATTACK)) 
+	if (round_power != PW_NONE && !power_activated && (round_power != PW_DOUBLE_DAMAGE || *move == MOVE_ATTACK) && (round_power != PW_DOUBLE_DEFEND || *move == MOVE_DEFEND)) 
 	{
 		printf("Your round power: %s\n", power_names[round_power]);
 		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &activate)) 
@@ -206,6 +311,7 @@ int main(int argc, char *argv[])
 	Move moves[PLAYER_COUNT];
 	Power use[PLAYER_COUNT];
 	Game game;
+	Power loadouts[PLAYER_COUNT][LOADOUT_SIZE];
 	TurnResult result;
 	GameError game_error;
 	char line[MAX_MESSAGE_LENGTH];
@@ -213,9 +319,6 @@ int main(int argc, char *argv[])
 	if (argc != 2) {
 		printf("Usage: %s port_no\n", argv[0]);
 		return EXIT_FAILURE;
-	}
-	if (game_init_basic(&game) != GAME_OK) {
-		die_with_error("Error: game initialization failed.");
 	}
 
 	printf("Server starting ...\n");
@@ -250,6 +353,43 @@ int main(int argc, char *argv[])
 	}
 	printf("Player 2 successfully connected ...\n");
 	close(server_sock);
+	if (!send_line(client_sock, "LOADOUT\n")) 
+	{
+		die_with_error("Error: send() Failed.");
+	}
+
+	if (!choose_loadout(loadouts[0])) 
+	{
+		printf("Input ended while choosing a loadout.\n");
+		close(client_sock);
+		return EXIT_FAILURE;
+	}
+
+	while (1) {
+		printf("Waiting for Player 2 to choose a loadout ...\n");
+		fflush(stdout);
+
+		if (!receive_line(client_sock, line, sizeof(line))) 
+		{
+			printf("Player 2 disconnected during loadout selection.\n");
+			close(client_sock);
+			return EXIT_FAILURE;
+		}
+
+		if (get_loadout(line, loadouts[1]) && game_init(&game, loadouts) == GAME_OK) 
+		{
+			if (!send_line(client_sock, "OK\n")) {
+				die_with_error("Error: send() Failed.");
+			}
+			break;
+		}
+
+		if (!send_line(client_sock, "RETRY\n") || !send_line(client_sock, "LOADOUT\n")) 
+		{
+			die_with_error("Error: send() Failed.");
+		}
+	}
+
 	if (!send_line(client_sock, "READY 2\n")) {
 		die_with_error("Error: send() Failed.");
 	}
