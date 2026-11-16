@@ -207,7 +207,7 @@ static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_C
 	}
 	*move = (Move)(choice - 1);
 	*use = PW_NONE;
-	if (round_power != PW_NONE && !power_activated && (round_power != PW_DOUBLE_DAMAGE || *move == MOVE_ATTACK) && (round_power != PW_DOUBLE_DEFEND || *move == MOVE_DEFEND)) 
+	if (round_power != PW_NONE && !power_activated && (round_power != PW_DOUBLE_DAMAGE || *move == MOVE_ATTACK) && (round_power != PW_DOUBLE_DEFEND || *move == MOVE_DEFEND) && (round_power != PW_GUARD_BREAK || *move == MOVE_COUNTER) && (round_power != PW_FULL_COUNTER || *move == MOVE_COUNTER)) 
 	{
 		printf("Your round power: %s\n", power_names[round_power]);
 		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &activate)) 
