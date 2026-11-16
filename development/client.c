@@ -278,7 +278,7 @@ static int choose_move(int socket_fd, const char *line)
 		return 0;
 	}
 	move = choice;
-	if (power_code > 0 && !activated  && (power_code != PW_DOUBLE_DAMAGE + 1 || move == MOVE_ATTACK + 1) && (power_code != PW_DOUBLE_DEFEND + 1 || move == MOVE_DEFEND + 1)) 
+	if (power_code > 0 && !activated  && (power_code != PW_DOUBLE_DAMAGE + 1 || move == MOVE_ATTACK + 1) && (power_code != PW_DOUBLE_DEFEND + 1 || move == MOVE_DEFEND + 1) && (power_code != PW_GUARD_BREAK + 1 || move == MOVE_COUNTER + 1) && (power_code != PW_FULL_COUNTER + 1 || move == MOVE_COUNTER + 1)) 
 	{
 		printf("Your round power: %s\n", power_names[power_code - 1]);
 		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &choice)) 
