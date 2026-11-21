@@ -22,6 +22,16 @@ static const char *power_names[PW_COUNT] = {
 	"Full Counter"
 };
 
+static const char *power_moves[PW_COUNT] = {
+	"any move",
+	"Attack",
+	"Attack",
+	"Defend",
+	"Defend",
+	"Counter",
+	"Counter"
+};
+
 static void die_with_error(const char *error_msg)
 {
 	printf("%s\n", error_msg);
@@ -235,6 +245,7 @@ static int choose_round_power(int socket_fd, char *line, size_t line_size)
 
 		if (!receive_line(socket_fd, line, line_size)) 
 		{
+			printf("Player 1 left the match. You win by forfeit!\n");
 			return 0;
 		}
 
@@ -246,6 +257,21 @@ static int choose_round_power(int socket_fd, char *line, size_t line_size)
 			return 0;
 		}
 	}
+}
+
+static void print_hp_bar(const char *label, int hp)
+{
+	int i;
+
+	printf("%-12s [", label);
+	for (i = 0; i < MAX_HP / HP_PER_BAR_CHAR; ++i) {
+		if (i * HP_PER_BAR_CHAR < hp) {
+			printf("#");
+		} else {
+			printf("-");
+		}
+	}
+	printf("] %d/%d\n", hp, MAX_HP);
 }
 
 static int choose_move(int socket_fd, const char *line)
@@ -265,7 +291,11 @@ static int choose_move(int socket_fd, const char *line)
 		return 0;
 	}
 	printf("\nRound wins: Player 1: %d | You: %d\n", round_wins[0], round_wins[1]);
-	printf("Player 1 HP: %d | Your HP: %d\n", hp[0], hp[1]);
+	print_hp_bar("Player 1 HP:", hp[0]);
+	print_hp_bar("Your HP:", hp[1]);
+	if (power_code > 0) {
+		printf("Your round power: %s (use with %s, %s)\n", power_names[power_code - 1], power_moves[power_code - 1], activated ? "used" : "not used yet");
+	}
 	printf("1. Attack\n2. Defend\n3. Counter\n");
 	if (!read_choice("Choose your move: ", 1, MOVE_COUNT, &choice)) 
 	{
@@ -274,7 +304,6 @@ static int choose_move(int socket_fd, const char *line)
 	move = choice;
 	if (power_code > 0 && !activated && power_matches_move((Power)(power_code - 1), (Move)(move - 1))) 
 	{
-		printf("Your round power: %s\n", power_names[power_code - 1]);
 		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &choice)) 
 		{
 			return 0;
@@ -386,17 +415,28 @@ int main(int argc, char *argv[])
 
 	while (1) {
 		if (!receive_line(client_sock, line, sizeof(line))) {
-			printf("Server closed the connection.\n");
+			printf("Player 1 left the match. You win by forfeit!\n");
 			break;
 		}
-		if (strncmp(line, "PICK ", 5) == 0) {
+		if (strncmp(line, "ROUND ", 6) == 0) {
+			int round_number;
+
+			if (sscanf(line, "ROUND %d", &round_number) == 1) {
+				printf("\nRound %d begins!\n", round_number);
+			}
+		}
+		else if (strncmp(line, "PICK ", 5) == 0) 
+		{
 			if (!choose_round_power(client_sock, line, sizeof(line))) {
 				break;
 			}
 		}
 		else if (strncmp(line, "TURN ", 5) == 0) {
-			if (!choose_move(client_sock, line) ||
-				!receive_line(client_sock, line, sizeof(line))) {
+			if (!choose_move(client_sock, line)) {
+				break;
+			}
+			if (!receive_line(client_sock, line, sizeof(line))) {
+				printf("Player 1 left the match. You win by forfeit!\n");
 				break;
 			}
 			if (strcmp(line, "RETRY") == 0) {

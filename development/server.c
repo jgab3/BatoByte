@@ -22,6 +22,16 @@ static const char *power_names[PW_COUNT] = {
 	"Full Counter"
 };
 
+static const char *power_moves[PW_COUNT] = {
+	"any move",
+	"Attack",
+	"Attack",
+	"Defend",
+	"Defend",
+	"Counter",
+	"Counter"
+};
+
 static void die_with_error(const char *error_msg)
 {
 	printf("%s\n", error_msg);
@@ -186,13 +196,30 @@ static int get_loadout(const char *line, Power loadout[LOADOUT_SIZE])
 	return 1;
 }
 
+static void print_hp_bar(const char *label, int hp)
+{
+	int i;
+
+	printf("%-12s [", label);
+	for (i = 0; i < MAX_HP / HP_PER_BAR_CHAR; ++i) {
+		if (i * HP_PER_BAR_CHAR < hp) {
+			printf("#");
+		} else {
+			printf("-");
+		}
+	}
+	printf("] %d/%d\n", hp, MAX_HP);
+}
+
 static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_COUNT], Power round_power, int power_activated, Move *move, Power *use)
 {
 	int choice;
 	int activate = 2;
 
 	printf("\nRound wins: You: %d | Player 2: %d\n", round_wins[0], round_wins[1]);
-	printf("Your HP: %d | Player 2 HP: %d\n", hp[0], hp[1]);
+	print_hp_bar("Your HP:", hp[0]);
+	print_hp_bar("Player 2 HP:", hp[1]);
+	printf("Your round power: %s (use with %s, %s)\n", power_names[round_power], power_moves[round_power], power_activated ? "used" : "not used yet");
 	printf("1. Attack\n2. Defend\n3. Counter\n");
 	if (!read_choice("Choose your move: ", 1, MOVE_COUNT, &choice)) {
 		return 0;
@@ -201,7 +228,6 @@ static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_C
 	*use = PW_NONE;
 	if (round_power != PW_NONE && !power_activated && power_matches_move(round_power, *move)) 
 	{
-		printf("Your round power: %s\n", power_names[round_power]);
 		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &activate)) 
 		{
 			return 0;
@@ -403,6 +429,14 @@ int main(int argc, char *argv[])
 				int power_choice;
 				char extra;
 
+				printf("\nRound %d begins!\n", game.round_number);
+				length = snprintf(line, sizeof(line), "ROUND %d\n", game.round_number);
+
+				if (length < 0 || (size_t)length >= sizeof(line) || !send_line(client_sock, line)) 
+				{
+					die_with_error("Error: send() Failed.");
+				}
+
 				if (!send_pick_prompt(client_sock, &game)) {
 					die_with_error("Error: send() Failed.");
 				}
@@ -418,7 +452,7 @@ int main(int argc, char *argv[])
 
 				while (1) {
 					if (!receive_line(client_sock, line, sizeof(line))) {
-						printf("Player 2 disconnected during power selection.\n");
+						printf("Player 2 left the match. You win by forfeit!\n");
 						close(client_sock);
 						return EXIT_FAILURE;
 					}
@@ -458,7 +492,7 @@ int main(int argc, char *argv[])
 			printf("Waiting for Player 2 to choose a move ...\n");
 			fflush(stdout);
 			if (!receive_line(client_sock, line, sizeof(line))) {
-				printf("Player 2 disconnected.\n");
+				printf("Player 2 left the match. You win by forfeit!\n");
 				close(client_sock);
 				return EXIT_FAILURE;
 			}

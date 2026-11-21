@@ -23,6 +23,7 @@
 
 #define MAX_MESSAGE_LENGTH 512
 #define MAX_RELAY_LENGTH (MAX_MESSAGE_LENGTH + 16)
+#define HP_PER_BAR_CHAR 5
 
 typedef enum {
 	MOVE_ATTACK,
