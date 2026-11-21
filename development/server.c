@@ -122,6 +122,28 @@ static void print_power_options(void)
 	}
 }
 
+static void print_how_to_play(void)
+{
+	printf("\n=============== BatoByte: Power Battle ===============\n");
+	printf("Each round starts at %d HP. First to win %d rounds wins.\n",
+		START_HP, ROUNDS_TO_WIN);
+	printf("Each turn, both players secretly pick a move:\n");
+	printf("  Attack beats Defend, Defend beats Counter, Counter reflects Attack.\n");
+	printf("Before the match, pick %d different powers.\n", LOADOUT_SIZE);
+	printf("Each round, pick 1 of them. You can use it once that round,\n");
+	printf("but ONLY with its move. Used or not, it is gone after the round.\n");
+	printf("If no one is hit for too many turns, both players lose HP.\n");
+	printf("\nPowers (move needed):\n");
+	printf("  Heal          (any move) - restore some HP\n");
+	printf("  Double Damage (Attack)   - hit twice as hard, even through Defend\n");
+	printf("  Poison        (Attack)   - a landed hit poisons for a few turns\n");
+	printf("  Double Defend (Defend)   - block all attack damage\n");
+	printf("  Thorns        (Defend)   - an attacker who hits you bleeds\n");
+	printf("  Guard Break   (Counter)  - your Counter hurts a plain Defend\n");
+	printf("  Full Counter  (Counter)  - reflect double damage\n");
+	printf("======================================================\n\n");
+}
+
 static int choose_loadout(Power loadout[LOADOUT_SIZE])
 {
 	int slot;
@@ -380,6 +402,7 @@ int main(int argc, char *argv[])
 	}
 	printf("Player 2 successfully connected ...\n");
 	close(server_sock);
+	print_how_to_play();
 	send_or_die(client_sock, "LOADOUT\n");
 
 	if (!choose_loadout(loadouts[0])) {
