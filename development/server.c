@@ -501,6 +501,9 @@ int main(int argc, char *argv[])
 		if (result.round_winner >= 0) {
 			printf("Player %d won the round!\n", result.round_winner + 1);
 		}
+		if (result.outcome == TURN_MUTUAL_KO) {
+			printf("Double KO! No one wins this round. Replaying with full HP and powers restored.\n");
+		}
 		length = snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d\n", moves[0], moves[1], use[0] + 1, use[1] + 1, damage[0], damage[1], hp[0], hp[1], result.round_winner + 1, poison[0], poison[1], bleed[0], bleed[1]);
 		if (length < 0 || (size_t)length >= sizeof(line) ||
 			!send_line(client_sock, line)) {
@@ -519,11 +522,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	if (match_winner == 0) {
-		printf("The match ends in a draw.\n");
-	} else {
-		printf("Player %d wins the match!\n", match_winner);
-	}
+	printf("Player %d wins the match!\n", match_winner);
 	printf("Closing connection ...\n");
 	close(client_sock);
 	return EXIT_SUCCESS;
