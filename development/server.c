@@ -89,17 +89,20 @@ static int read_choice(const char *prompt, int minimum, int maximum,
 	}
 }
 
-static int power_is_available(Power power)
+static int power_matches_move(Power power, Move move)
 {
 	switch (power) {
-	case PW_HEAL:
 	case PW_DOUBLE_DAMAGE:
+	case PW_POISON:
+		return move == MOVE_ATTACK;
 	case PW_DOUBLE_DEFEND:
+	case PW_THORNS:
+		return move == MOVE_DEFEND;
 	case PW_GUARD_BREAK:
 	case PW_FULL_COUNTER:
-		return 1;
+		return move == MOVE_COUNTER;
 	default:
-		return 0;
+		return 1; /* Heal works with any move. */
 	}
 }
 
@@ -107,12 +110,9 @@ static void print_power_options(void)
 {
 	Power power;
 
-	for (power = PW_HEAL; power < PW_COUNT;
-		 power = (Power)(power + 1)) {
-		printf("%d. %s%s\n",
-			   power + 1,
-			   power_names[power],
-			   power_is_available(power) ? "" : " (unavailable)");
+	for (power = PW_HEAL; power < PW_COUNT; power = (Power)(power + 1)) 
+	{
+		printf("%d. %s\n", power + 1, power_names[power]);
 	}
 }
 
@@ -136,11 +136,6 @@ static int choose_loadout(Power loadout[LOADOUT_SIZE])
 			}
 
 			selected = (Power)(choice - 1);
-			if (!power_is_available(selected)) {
-				printf("%s is unavailable right now. Choose another.\n",
-					   power_names[selected]);
-				continue;
-			}
 
 			duplicate = 0;
 			for (previous = 0; previous < slot; ++previous) {
@@ -179,9 +174,6 @@ static int get_loadout(const char *line, Power loadout[LOADOUT_SIZE])
 		}
 
 		selected = (Power)(codes[slot] - 1);
-		if (!power_is_available(selected)) {
-			return 0;
-		}
 
 		for (previous = 0; previous < slot; ++previous) {
 			if (loadout[previous] == selected) {
@@ -207,7 +199,7 @@ static int choose_move(const int hp[PLAYER_COUNT], const int round_wins[PLAYER_C
 	}
 	*move = (Move)(choice - 1);
 	*use = PW_NONE;
-	if (round_power != PW_NONE && !power_activated && (round_power != PW_DOUBLE_DAMAGE || *move == MOVE_ATTACK) && (round_power != PW_DOUBLE_DEFEND || *move == MOVE_DEFEND) && (round_power != PW_GUARD_BREAK || *move == MOVE_COUNTER) && (round_power != PW_FULL_COUNTER || *move == MOVE_COUNTER)) 
+	if (round_power != PW_NONE && !power_activated && power_matches_move(round_power, *move)) 
 	{
 		printf("Your round power: %s\n", power_names[round_power]);
 		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &activate)) 
@@ -275,7 +267,7 @@ static int send_pick_prompt(int client_sock, const Game *game)
 	return length >= 0 && (size_t)length < sizeof(line) && send_line(client_sock, line);
 }
 
-static void print_result(const Move moves[PLAYER_COUNT], const Power use[PLAYER_COUNT], const int damage[PLAYER_COUNT], const int hp[PLAYER_COUNT])
+static void print_result(const Move moves[PLAYER_COUNT], const Power use[PLAYER_COUNT], const int damage[PLAYER_COUNT], const int hp[PLAYER_COUNT], const int poison[PLAYER_COUNT], const int bleed[PLAYER_COUNT])
 {
 	int player;
 
@@ -288,7 +280,15 @@ static void print_result(const Move moves[PLAYER_COUNT], const Power use[PLAYER_
 		if (use[player] != PW_NONE) {
 			printf("%s activated their power.\n", player == 0 ? "You" : "Player 2");
 		}
+
 		printf("%s HP: %d\n", player == 0 ? "Your" : "Player 2", hp[player]);
+
+		if (poison[player] > 0) {
+			printf("%s poisoned for %d more turn(s).\n", player == 0 ? "You are" : "Player 2 is", poison[player]);
+		}
+		if (bleed[player] > 0) {
+			printf("%s bleeding for %d more turn(s).\n", player == 0 ? "You are" : "Player 2 is", bleed[player]);
+		}
 	}
 }
 
@@ -301,6 +301,8 @@ int main(int argc, char *argv[])
 	int length;
 	int hp[PLAYER_COUNT];
 	int damage[PLAYER_COUNT];
+	int poison[PLAYER_COUNT];
+	int bleed[PLAYER_COUNT];
 	int round_wins[PLAYER_COUNT];
 	int match_winner = -1;
 	int player;
@@ -477,11 +479,12 @@ int main(int argc, char *argv[])
 			}
 			continue;
 		}
-		for (player = 0; player < PLAYER_COUNT; ++player) {
-			damage[player] = result.tick_damage[player] +
-						 result.move_damage[player] +
-						 result.stall_penalty[player];
+		for (player = 0; player < PLAYER_COUNT; ++player) 
+		{
+			damage[player] = result.tick_damage[player] + result.move_damage[player] + result.stall_penalty[player];
 			hp[player] = result.final_hp[player];
+			poison[player] = game.players[player].poison_turns;
+			bleed[player] = game.players[player].bleed_turns;
 		}
 
 		if (result.outcome == TURN_MATCH_WON) 
@@ -494,11 +497,11 @@ int main(int argc, char *argv[])
 			need_power_pick = 1;
 		}
 
-		print_result(moves, use, damage, hp);
+		print_result(moves, use, damage, hp, poison, bleed);
 		if (result.round_winner >= 0) {
 			printf("Player %d won the round!\n", result.round_winner + 1);
 		}
-		length = snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d\n", moves[0], moves[1], use[0] + 1, use[1] + 1, damage[0], damage[1], hp[0], hp[1], result.round_winner + 1);
+		length = snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d\n", moves[0], moves[1], use[0] + 1, use[1] + 1, damage[0], damage[1], hp[0], hp[1], result.round_winner + 1, poison[0], poison[1], bleed[0], bleed[1]);
 		if (length < 0 || (size_t)length >= sizeof(line) ||
 			!send_line(client_sock, line)) {
 			die_with_error("Error: send() Failed.");

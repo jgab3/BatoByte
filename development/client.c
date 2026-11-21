@@ -89,17 +89,20 @@ static int read_choice(const char *prompt, int minimum, int maximum,
 	}
 }
 
-static int power_is_available(Power power)
+static int power_matches_move(Power power, Move move)
 {
 	switch (power) {
-	case PW_HEAL:
 	case PW_DOUBLE_DAMAGE:
+	case PW_POISON:
+		return move == MOVE_ATTACK;
 	case PW_DOUBLE_DEFEND:
+	case PW_THORNS:
+		return move == MOVE_DEFEND;
 	case PW_GUARD_BREAK:
 	case PW_FULL_COUNTER:
-		return 1;
+		return move == MOVE_COUNTER;
 	default:
-		return 0;
+		return 1; /* Heal works with any move. */
 	}
 }
 
@@ -123,13 +126,9 @@ static int choose_loadout(int socket_fd, char *line, size_t line_size)
 				printf("\nChoose power %d of %d:\n",
 					   slot + 1, LOADOUT_SIZE);
 
-				for (selected = PW_HEAL; selected < PW_COUNT;
-					 selected = (Power)(selected + 1)) {
-					printf("%d. %s%s\n",
-						   selected + 1,
-						   power_names[selected],
-						   power_is_available(selected)
-							   ? "" : " (unavailable)");
+				for (selected = PW_HEAL; selected < PW_COUNT; selected = (Power)(selected + 1)) 
+				{
+					printf("%d. %s\n", selected + 1, power_names[selected]);
 				}
 
 				if (!read_choice("Choose a power: ",
@@ -138,12 +137,7 @@ static int choose_loadout(int socket_fd, char *line, size_t line_size)
 				}
 
 				selected = (Power)(choice - 1);
-				if (!power_is_available(selected)) {
-					printf("%s is unavailable right now. Choose another.\n",
-						   power_names[selected]);
-					continue;
-				}
-
+				
 				duplicate = 0;
 				for (previous = 0; previous < slot; ++previous) {
 					if (loadout[previous] == selected) {
@@ -278,7 +272,7 @@ static int choose_move(int socket_fd, const char *line)
 		return 0;
 	}
 	move = choice;
-	if (power_code > 0 && !activated  && (power_code != PW_DOUBLE_DAMAGE + 1 || move == MOVE_ATTACK + 1) && (power_code != PW_DOUBLE_DEFEND + 1 || move == MOVE_DEFEND + 1) && (power_code != PW_GUARD_BREAK + 1 || move == MOVE_COUNTER + 1) && (power_code != PW_FULL_COUNTER + 1 || move == MOVE_COUNTER + 1)) 
+	if (power_code > 0 && !activated && power_matches_move((Power)(power_code - 1), (Move)(move - 1))) 
 	{
 		printf("Your round power: %s\n", power_names[power_code - 1]);
 		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &choice)) 
@@ -305,14 +299,12 @@ static int show_result(const char *line)
 	int power_code[PLAYER_COUNT];
 	int damage[PLAYER_COUNT];
 	int hp[PLAYER_COUNT];
+	int poison[PLAYER_COUNT];
+	int bleed[PLAYER_COUNT];
 	int player;
 	int round_winner;
 
-	if (sscanf(line, "RESULT %d %d %d %d %d %d %d %d %d", &moves[0], &moves[1], &power_code[0], &power_code[1], &damage[0], &damage[1], &hp[0], &hp[1], &round_winner) != 9 ||
-		moves[0] < 0 || moves[0] >= MOVE_COUNT ||
-		moves[1] < 0 || moves[1] >= MOVE_COUNT ||
-		power_code[0] < 0 || power_code[0] > PW_COUNT ||
-		power_code[1] < 0 || power_code[1] > PW_COUNT)
+	if (sscanf(line, "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d", &moves[0], &moves[1], &power_code[0], &power_code[1], &damage[0], &damage[1], &hp[0], &hp[1], &round_winner, &poison[0], &poison[1], &bleed[0], &bleed[1]) != 13 || moves[0] < 0 || moves[0] >= MOVE_COUNT || moves[1] < 0 || moves[1] >= MOVE_COUNT || power_code[0] < 0 || power_code[0] > PW_COUNT || power_code[1] < 0 || power_code[1] > PW_COUNT)
 	{
 		return 0;
 	}
@@ -328,7 +320,15 @@ static int show_result(const char *line)
 		{
 			printf("%s activated their power.\n", player == 0 ? "Player 1" : "You");
 		}
+
 		printf("%s HP: %d\n", player == 0 ? "Player 1" : "Your", hp[player]);
+
+		if (poison[player] > 0) {
+			printf("%s poisoned for %d more turn(s).\n", player == 0 ? "Player 1 is" : "You are", poison[player]);
+		}
+		if (bleed[player] > 0) {
+			printf("%s bleeding for %d more turn(s).\n", player == 0 ? "Player 1 is" : "You are", bleed[player]);
+		}
 	}
 	if (round_winner > 0) {
 		printf("Player %d won the round!\n", round_winner);
