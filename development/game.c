@@ -73,6 +73,23 @@ GameError game_pick_round_power(Game *game, int player, Power power)
 	return GAME_OK;
 }
 
+int power_matches_move(Power power, Move move)
+{
+	switch (power) {
+	case PW_DOUBLE_DAMAGE:
+	case PW_POISON:
+		return move == MOVE_ATTACK;
+	case PW_DOUBLE_DEFEND:
+	case PW_THORNS:
+		return move == MOVE_DEFEND;
+	case PW_GUARD_BREAK:
+	case PW_FULL_COUNTER:
+		return move == MOVE_COUNTER;
+	default:
+		return 1; /* Heal works with any move. */
+	}
+}
+
 static void resolve_moves(const Move moves[PLAYER_COUNT],
 						  const Power use[PLAYER_COUNT],
 						  int damage[PLAYER_COUNT],
@@ -190,12 +207,9 @@ GameError resolve_turn(Game *game,
 					   TurnResult *result)
 {
 	TurnResult next = {0};
-	int move_damage[PLAYER_COUNT];
-	int tick_damage[PLAYER_COUNT] = {0, 0};
 	int landed[PLAYER_COUNT];
 	int player;
-	int stall_turn;
-	Move allowed_move;
+	int other;
 	int new_hp;
 
 	if (game == NULL || moves == NULL || use == NULL || result == NULL) {
@@ -207,7 +221,6 @@ GameError resolve_turn(Game *game,
 
 	for (player = 0; player < PLAYER_COUNT; ++player) {
 		Power power = game->players[player].round_power;
-		allowed_move = MOVE_COUNT;
 
 		if (moves[player] < MOVE_ATTACK || moves[player] >= MOVE_COUNT) {
 			return GAME_ERR_INVALID_MOVE;
@@ -215,85 +228,63 @@ GameError resolve_turn(Game *game,
 		if (power == PW_NONE) {
 			return GAME_ERR_INVALID_ACTIVATION;
 		}
-		if (power == PW_DOUBLE_DAMAGE || power == PW_POISON) {
-			allowed_move = MOVE_ATTACK;
-		} else if (power == PW_DOUBLE_DEFEND || power == PW_THORNS) {
-			allowed_move = MOVE_DEFEND;
-		} else if (power == PW_GUARD_BREAK || power == PW_FULL_COUNTER) {
-			allowed_move = MOVE_COUNTER;
-		}
 		if (use[player] != PW_NONE &&
 			(use[player] != power ||
 			 game->players[player].power_activated ||
-			 (power != PW_HEAL && moves[player] != allowed_move))) {
+			 !power_matches_move(power, moves[player]))) {
 			return GAME_ERR_INVALID_ACTIVATION;
 		}
 	}
 
 	for (player = 0; player < PLAYER_COUNT; ++player) {
 		if (game->players[player].poison_turns > 0) {
-			tick_damage[player] += POISON_DMG;
+			next.tick_damage[player] += POISON_DMG;
 			--game->players[player].poison_turns;
 		}
 		if (game->players[player].bleed_turns > 0) {
-			tick_damage[player] += BLEED_DMG;
+			next.tick_damage[player] += BLEED_DMG;
 			--game->players[player].bleed_turns;
 		}
-		next.tick_damage[player] = tick_damage[player];
 	}
 
-	resolve_moves(moves, use, move_damage, landed);
+	resolve_moves(moves, use, next.move_damage, landed);
+
 	for (player = 0; player < PLAYER_COUNT; ++player) {
-		next.move_damage[player] = move_damage[player];
+		other = 1 - player;
+		if (moves[player] == MOVE_ATTACK && use[player] == PW_POISON && landed[other]) {
+			game->players[other].poison_turns = POISON_TURNS;
+		}
+		if (moves[player] == MOVE_DEFEND && use[player] == PW_THORNS && landed[player]) {
+			game->players[other].bleed_turns = BLEED_TURNS;
+		}
 	}
 
-	if (moves[0] == MOVE_ATTACK && use[0] == PW_POISON && landed[1]) {
-		game->players[1].poison_turns = POISON_TURNS;
-	}
-	if (moves[1] == MOVE_ATTACK && use[1] == PW_POISON && landed[0]) {
-		game->players[0].poison_turns = POISON_TURNS;
-	}
-	if (moves[1] == MOVE_DEFEND && use[1] == PW_THORNS && landed[1]) {
-		game->players[0].bleed_turns = BLEED_TURNS;
-	}
-	if (moves[0] == MOVE_DEFEND && use[0] == PW_THORNS && landed[0]) {
-		game->players[1].bleed_turns = BLEED_TURNS;
-	}
-
-	if (game->stall_enabled) {
-    		stall_turn = move_damage[0] == 0 && move_damage[1] == 0;
-    		if (stall_turn) {
-        		++game->stall_turns;
-        		if (game->stall_turns > STALL_FREE_TURNS) {
-           			 next.stall_penalty[0] = STALL_PENALTY;
-           			 next.stall_penalty[1] = STALL_PENALTY;
-       		 	}
-    		} else {
-        		game->stall_turns = 0;
-    		}
+	if (game->stall_enabled && next.move_damage[0] == 0 && next.move_damage[1] == 0) {
+		++game->stall_turns;
+		if (game->stall_turns > STALL_FREE_TURNS) {
+			next.stall_penalty[0] = STALL_PENALTY;
+			next.stall_penalty[1] = STALL_PENALTY;
+		}
 	} else {
-    		game->stall_turns = 0;
+		game->stall_turns = 0;
 	}
 
 	for (player = 0; player < PLAYER_COUNT; ++player) {
-    		if (use[player] == PW_HEAL) {
-        		next.healing[player] = HEAL_AMT;
-    		}
+		if (use[player] == PW_HEAL) {
+			next.healing[player] = HEAL_AMT;
+		}
 
-    		new_hp = game->players[player].hp - tick_damage[player]
-             		- move_damage[player] - next.stall_penalty[player]
-             		+ next.healing[player];
-    		if (new_hp < 0) {
-        		new_hp = 0;
-    		}
-    		if (new_hp > MAX_HP) {
-        		new_hp = MAX_HP;
-    		}
-    		next.final_hp[player] = new_hp;
-	}
-
-	for (player = 0; player < PLAYER_COUNT; ++player) {
-		game->players[player].hp = next.final_hp[player];
+		new_hp = game->players[player].hp - next.tick_damage[player]
+			- next.move_damage[player] - next.stall_penalty[player]
+			+ next.healing[player];
+		if (new_hp < 0) {
+			new_hp = 0;
+		}
+		if (new_hp > MAX_HP) {
+			new_hp = MAX_HP;
+		}
+		next.final_hp[player] = new_hp;
+		game->players[player].hp = new_hp;
 		if (use[player] != PW_NONE) {
 			game->players[player].power_activated = 1;
 		}

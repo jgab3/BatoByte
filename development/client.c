@@ -116,6 +116,15 @@ static int power_matches_move(Power power, Move move)
 	}
 }
 
+static void print_power_options(void)
+{
+	Power power;
+
+	for (power = PW_HEAL; power < PW_COUNT; power = (Power)(power + 1)) {
+		printf("%d. %s\n", power + 1, power_names[power]);
+	}
+}
+
 static int choose_loadout(int socket_fd, char *line, size_t line_size)
 {
 	Power loadout[LOADOUT_SIZE];
@@ -124,7 +133,6 @@ static int choose_loadout(int socket_fd, char *line, size_t line_size)
 	int previous;
 	int choice;
 	int duplicate;
-	int length;
 
 	while (1) {
 		if (strcmp(line, "LOADOUT") != 0) {
@@ -135,11 +143,7 @@ static int choose_loadout(int socket_fd, char *line, size_t line_size)
 			while (1) {
 				printf("\nChoose power %d of %d:\n",
 					   slot + 1, LOADOUT_SIZE);
-
-				for (selected = PW_HEAL; selected < PW_COUNT; selected = (Power)(selected + 1)) 
-				{
-					printf("%d. %s\n", selected + 1, power_names[selected]);
-				}
+				print_power_options();
 
 				if (!read_choice("Choose a power: ",
 								 1, PW_COUNT, &choice)) {
@@ -164,11 +168,9 @@ static int choose_loadout(int socket_fd, char *line, size_t line_size)
 			}
 		}
 
-		length = snprintf(line, line_size, "LOADOUT %d %d %d\n",
-						  loadout[0] + 1,
-						  loadout[1] + 1,
-						  loadout[2] + 1);
-		if (length < 0 || (size_t)length >= line_size || !send_line(socket_fd, line)) {
+		snprintf(line, line_size, "LOADOUT %d %d %d\n",
+				 loadout[0] + 1, loadout[1] + 1, loadout[2] + 1);
+		if (!send_line(socket_fd, line)) {
 			return 0;
 		}
 
@@ -195,18 +197,14 @@ static int choose_round_power(int socket_fd, char *line, size_t line_size)
 	int choice;
 	int slot;
 	int found;
-	int length;
 
 	while (1) {
-		if (sscanf(line, "PICK %d %d %d", &available[0], &available[1], &available[2]) != 3) 
-		{
+		if (sscanf(line, "PICK %d %d %d", &available[0], &available[1], &available[2]) != 3) {
 			return 0;
 		}
 
-		for (slot = 0; slot < LOADOUT_SIZE; ++slot) 
-		{
-			if (available[slot] < 0 || available[slot] > PW_COUNT) 
-			{
+		for (slot = 0; slot < LOADOUT_SIZE; ++slot) {
+			if (available[slot] < 0 || available[slot] > PW_COUNT) {
 				return 0;
 			}
 		}
@@ -218,8 +216,7 @@ static int choose_round_power(int socket_fd, char *line, size_t line_size)
 			}
 		}
 
-		if (!read_choice("Choose this round's power: ", 1, PW_COUNT, &choice)) 
-		{
+		if (!read_choice("Choose this round's power: ", 1, PW_COUNT, &choice)) {
 			return 0;
 		}
 
@@ -234,17 +231,15 @@ static int choose_round_power(int socket_fd, char *line, size_t line_size)
 			continue;
 		}
 
-		length = snprintf(line, line_size, "PICK %d\n", choice);
-		if (length < 0 || (size_t)length >= line_size || !send_line(socket_fd, line)) 
-		{
+		snprintf(line, line_size, "PICK %d\n", choice);
+		if (!send_line(socket_fd, line)) {
 			return 0;
 		}
 
 		printf("Waiting for Player 1 to finish choosing a power ...\n");
 		fflush(stdout);
 
-		if (!receive_line(socket_fd, line, line_size)) 
-		{
+		if (!receive_line(socket_fd, line, line_size)) {
 			printf("Player 1 left the match. You win by forfeit!\n");
 			return 0;
 		}
@@ -284,37 +279,37 @@ static int choose_move(int socket_fd, const char *line)
 	int activation = 0;
 	int choice;
 	char response[MAX_MESSAGE_LENGTH];
-	int length;
 
-	if (sscanf(line, "TURN %d %d %d %d %d %d", &hp[0], &hp[1], &power_code, &activated, &round_wins[0], &round_wins[1]) != 6 || power_code < 0 || power_code > PW_COUNT || (activated != 0 && activated != 1))
-	{
+	if (sscanf(line, "TURN %d %d %d %d %d %d", &hp[0], &hp[1], &power_code, &activated,
+			&round_wins[0], &round_wins[1]) != 6 ||
+		power_code < 0 || power_code > PW_COUNT ||
+		(activated != 0 && activated != 1)) {
 		return 0;
 	}
 	printf("\nRound wins: Player 1: %d | You: %d\n", round_wins[0], round_wins[1]);
 	print_hp_bar("Player 1 HP:", hp[0]);
 	print_hp_bar("Your HP:", hp[1]);
 	if (power_code > 0) {
-		printf("Your round power: %s (use with %s, %s)\n", power_names[power_code - 1], power_moves[power_code - 1], activated ? "used" : "not used yet");
+		printf("Your round power: %s (use with %s, %s)\n",
+			power_names[power_code - 1], power_moves[power_code - 1],
+			activated ? "used" : "not used yet");
 	}
 	printf("1. Attack\n2. Defend\n3. Counter\n");
-	if (!read_choice("Choose your move: ", 1, MOVE_COUNT, &choice)) 
-	{
+	if (!read_choice("Choose your move: ", 1, MOVE_COUNT, &choice)) {
 		return 0;
 	}
 	move = choice;
-	if (power_code > 0 && !activated && power_matches_move((Power)(power_code - 1), (Move)(move - 1))) 
-	{
-		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &choice)) 
-		{
+	if (power_code > 0 && !activated &&
+		power_matches_move((Power)(power_code - 1), (Move)(move - 1))) {
+		if (!read_choice("Activate your power this turn? (1 yes, 2 no): ", 1, 2, &choice)) {
 			return 0;
 		}
 		if (choice == 1) {
 			activation = power_code;
 		}
 	}
-	length = snprintf(response, sizeof(response), "MOVE %d %d\n", move, activation);
-	if (length < 0 || (size_t)length >= sizeof(response) || !send_line(socket_fd, response)) 
-	{
+	snprintf(response, sizeof(response), "MOVE %d %d\n", move, activation);
+	if (!send_line(socket_fd, response)) {
 		return 0;
 	}
 	printf("Waiting for Player 1 to choose a move ...\n");
@@ -333,8 +328,14 @@ static int show_result(const char *line)
 	int player;
 	int round_winner;
 
-	if (sscanf(line, "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d", &moves[0], &moves[1], &power_code[0], &power_code[1], &damage[0], &damage[1], &hp[0], &hp[1], &round_winner, &poison[0], &poison[1], &bleed[0], &bleed[1]) != 13 || moves[0] < 0 || moves[0] >= MOVE_COUNT || moves[1] < 0 || moves[1] >= MOVE_COUNT || power_code[0] < 0 || power_code[0] > PW_COUNT || power_code[1] < 0 || power_code[1] > PW_COUNT)
-	{
+	if (sscanf(line, "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d",
+			&moves[0], &moves[1], &power_code[0], &power_code[1],
+			&damage[0], &damage[1], &hp[0], &hp[1], &round_winner,
+			&poison[0], &poison[1], &bleed[0], &bleed[1]) != 13 ||
+		moves[0] < 0 || moves[0] >= MOVE_COUNT ||
+		moves[1] < 0 || moves[1] >= MOVE_COUNT ||
+		power_code[0] < 0 || power_code[0] > PW_COUNT ||
+		power_code[1] < 0 || power_code[1] > PW_COUNT) {
 		return 0;
 	}
 
@@ -345,18 +346,19 @@ static int show_result(const char *line)
 			printf("%s took %d damage.\n", player == 0 ? "Player 1" : "You",
 				   damage[player]);
 		}
-		if (power_code[player] > 0) 
-		{
+		if (power_code[player] > 0) {
 			printf("%s activated their power.\n", player == 0 ? "Player 1" : "You");
 		}
 
 		printf("%s HP: %d\n", player == 0 ? "Player 1" : "Your", hp[player]);
 
 		if (poison[player] > 0) {
-			printf("%s poisoned for %d more turn(s).\n", player == 0 ? "Player 1 is" : "You are", poison[player]);
+			printf("%s poisoned for %d more turn(s).\n",
+				player == 0 ? "Player 1 is" : "You are", poison[player]);
 		}
 		if (bleed[player] > 0) {
-			printf("%s bleeding for %d more turn(s).\n", player == 0 ? "Player 1 is" : "You are", bleed[player]);
+			printf("%s bleeding for %d more turn(s).\n",
+				player == 0 ? "Player 1 is" : "You are", bleed[player]);
 		}
 	}
 	if (round_winner > 0) {
@@ -404,9 +406,10 @@ int main(int argc, char *argv[])
 		die_with_error("Error: connect() Failed.");
 	}
 	printf("Connection successful!\n");
-	if (!receive_line(client_sock, line, sizeof(line)) || strcmp(line, "LOADOUT") != 0 || !choose_loadout(client_sock, line, sizeof(line)) || 
-		!receive_line(client_sock, line, sizeof(line)) || sscanf(line, "READY %d", &player_number) != 1) 
-	{
+	if (!receive_line(client_sock, line, sizeof(line)) || strcmp(line, "LOADOUT") != 0 ||
+		!choose_loadout(client_sock, line, sizeof(line)) ||
+		!receive_line(client_sock, line, sizeof(line)) ||
+		sscanf(line, "READY %d", &player_number) != 1) {
 		printf("Server did not complete loadout selection.\n");
 		close(client_sock);
 		return EXIT_FAILURE;
@@ -424,14 +427,11 @@ int main(int argc, char *argv[])
 			if (sscanf(line, "ROUND %d", &round_number) == 1) {
 				printf("\nRound %d begins!\n", round_number);
 			}
-		}
-		else if (strncmp(line, "PICK ", 5) == 0) 
-		{
+		} else if (strncmp(line, "PICK ", 5) == 0) {
 			if (!choose_round_power(client_sock, line, sizeof(line))) {
 				break;
 			}
-		}
-		else if (strncmp(line, "TURN ", 5) == 0) {
+		} else if (strncmp(line, "TURN ", 5) == 0) {
 			if (!choose_move(client_sock, line)) {
 				break;
 			}
