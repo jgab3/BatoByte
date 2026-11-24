@@ -349,11 +349,12 @@ static int show_result(const char *line)
 	int bleed[PLAYER_COUNT];
 	int player;
 	int round_winner;
+	int stall_penalty;
 
-	if (sscanf(line, "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d",
+	if (sscanf(line, "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
 			&moves[0], &moves[1], &power_code[0], &power_code[1],
 			&damage[0], &damage[1], &hp[0], &hp[1], &round_winner,
-			&poison[0], &poison[1], &bleed[0], &bleed[1]) != 13 ||
+			&poison[0], &poison[1], &bleed[0], &bleed[1], &stall_penalty) != 14 ||
 		moves[0] < 0 || moves[0] >= MOVE_COUNT ||
 		moves[1] < 0 || moves[1] >= MOVE_COUNT ||
 		power_code[0] < 0 || power_code[0] > PW_COUNT ||
@@ -363,13 +364,20 @@ static int show_result(const char *line)
 
 	printf("\nPlayer 1 used %s!\n", move_names[moves[0]]);
 	printf("You used %s!\n", move_names[moves[1]]);
+	if (stall_penalty > 0) {
+		printf("Too much stalling! Both players lose %d HP.\n", stall_penalty);
+	}
 	for (player = 0; player < PLAYER_COUNT; ++player) {
 		if (damage[player] > 0) {
 			printf("%s took %d damage.\n", player == 0 ? "Player 1" : "You",
 				   damage[player]);
 		}
 		if (power_code[player] > 0) {
-			printf("%s activated their power.\n", player == 0 ? "Player 1" : "You");
+			printf("%s activated %s!\n", player == 0 ? "Player 1" : "You",
+				power_names[power_code[player] - 1]);
+			if (power_code[player] == PW_HEAL + 1) {
+				printf("%s healed %d HP.\n", player == 0 ? "Player 1" : "You", HEAL_AMT);
+			}
 		}
 
 		printf("%s HP: %d\n", player == 0 ? "Player 1" : "Your", hp[player]);

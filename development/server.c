@@ -315,18 +315,25 @@ static void send_pick_prompt(int client_sock, const Game *game)
 
 static void print_result(const Move moves[PLAYER_COUNT], const Power use[PLAYER_COUNT],
 	const int damage[PLAYER_COUNT], const int hp[PLAYER_COUNT],
-	const int poison[PLAYER_COUNT], const int bleed[PLAYER_COUNT])
+	const int poison[PLAYER_COUNT], const int bleed[PLAYER_COUNT], int stall_penalty)
 {
 	int player;
 
 	printf("\nYou used %s!\n", move_names[moves[0]]);
 	printf("Player 2 used %s!\n", move_names[moves[1]]);
+	if (stall_penalty > 0) {
+		printf("Too much stalling! Both players lose %d HP.\n", stall_penalty);
+	}
 	for (player = 0; player < PLAYER_COUNT; ++player) {
 		if (damage[player] > 0) {
 			printf("%s took %d damage.\n", player == 0 ? "You" : "Player 2", damage[player]);
 		}
 		if (use[player] != PW_NONE) {
-			printf("%s activated their power.\n", player == 0 ? "You" : "Player 2");
+			printf("%s activated %s!\n", player == 0 ? "You" : "Player 2",
+				power_names[use[player]]);
+			if (use[player] == PW_HEAL) {
+				printf("%s healed %d HP.\n", player == 0 ? "You" : "Player 2", HEAL_AMT);
+			}
 		}
 
 		printf("%s HP: %d\n", player == 0 ? "Your" : "Player 2", hp[player]);
@@ -507,17 +514,17 @@ int main(int argc, char *argv[])
 			need_power_pick = 1;
 		}
 
-		print_result(moves, use, damage, hp, poison, bleed);
+		print_result(moves, use, damage, hp, poison, bleed, result.stall_penalty[0]);
 		if (result.round_winner >= 0) {
 			printf("%s won the round!\n", result.round_winner == 0 ? "You" : "Player 2");
 		}
 		if (result.outcome == TURN_MUTUAL_KO) {
 			printf("Double KO! No one wins this round. Replaying with full HP and powers restored.\n");
 		}
-		snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+		snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
 			moves[0], moves[1], use[0] + 1, use[1] + 1, damage[0], damage[1],
 			hp[0], hp[1], result.round_winner + 1,
-			poison[0], poison[1], bleed[0], bleed[1]);
+			poison[0], poison[1], bleed[0], bleed[1], result.stall_penalty[0]);
 		send_or_die(client_sock, line);
 		if (match_winner >= 0) {
 			snprintf(line, sizeof(line), "END %d\n", match_winner);
