@@ -384,7 +384,7 @@ static int show_result(const char *line)
 		}
 	}
 	if (round_winner > 0) {
-		printf("Player %d won the round!\n", round_winner);
+		printf("%s won the round!\n", round_winner == 2 ? "You" : "Player 1");
 	}
 	if (hp[0] == 0 && hp[1] == 0) {
 		printf("Double KO! No one wins this round. Replaying with full HP and powers restored.\n");
@@ -476,7 +476,7 @@ int main(int argc, char *argv[])
 			if (strncmp(line, "END ", 4) == 0) {
 				int winner;
 				if (sscanf(line, "END %d", &winner) == 1) {
-					printf("Player %d wins the match!\n", winner);
+					printf("%s the match!\n", winner == 2 ? "You win" : "Player 1 wins");
 				}
 				break;
 			}

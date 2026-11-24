@@ -472,8 +472,11 @@ int main(int argc, char *argv[])
 				game.players[1].round_power + 1, game.players[1].power_activated,
 				game.players[0].round_wins, game.players[1].round_wins);
 
-			if (!send_line(client_sock, line) || !choose_move(&game, &moves[0], &use[0])) {
-				leave_match(client_sock, "Input ended or Player 2 disconnected.");
+			if (!send_line(client_sock, line)) {
+				leave_match(client_sock, "Player 2 left the match. You win by forfeit!");
+			}
+			if (!choose_move(&game, &moves[0], &use[0])) {
+				leave_match(client_sock, "Input ended while choosing a move.");
 			}
 			printf("Waiting for Player 2 to choose a move ...\n");
 			fflush(stdout);
@@ -506,7 +509,7 @@ int main(int argc, char *argv[])
 
 		print_result(moves, use, damage, hp, poison, bleed);
 		if (result.round_winner >= 0) {
-			printf("Player %d won the round!\n", result.round_winner + 1);
+			printf("%s won the round!\n", result.round_winner == 0 ? "You" : "Player 2");
 		}
 		if (result.outcome == TURN_MUTUAL_KO) {
 			printf("Double KO! No one wins this round. Replaying with full HP and powers restored.\n");
@@ -524,7 +527,7 @@ int main(int argc, char *argv[])
 		send_or_die(client_sock, "CONTINUE\n");
 	}
 
-	printf("Player %d wins the match!\n", match_winner);
+	printf("%s the match!\n", match_winner == 1 ? "You win" : "Player 2 wins");
 	printf("Closing connection ...\n");
 	close(client_sock);
 	return EXIT_SUCCESS;
