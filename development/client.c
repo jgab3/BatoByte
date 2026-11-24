@@ -173,7 +173,7 @@ static int choose_loadout(int socket_fd, char *line, size_t line_size)
 				}
 
 				selected = (Power)(choice - 1);
-				
+
 				duplicate = 0;
 				for (previous = 0; previous < slot; ++previous) {
 					if (loadout[previous] == selected) {

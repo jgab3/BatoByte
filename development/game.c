@@ -38,7 +38,6 @@ GameError game_init(Game *game,
 				loadouts[player][power];
 		}
 	}
-	game->stall_enabled = 1;
 	game->round_number = 1;
 	game->match_winner = -1;
 	return GAME_OK;
@@ -259,7 +258,7 @@ GameError resolve_turn(Game *game,
 		}
 	}
 
-	if (game->stall_enabled && next.move_damage[0] == 0 && next.move_damage[1] == 0) {
+	if (next.move_damage[0] == 0 && next.move_damage[1] == 0) {
 		++game->stall_turns;
 		if (game->stall_turns > STALL_FREE_TURNS) {
 			next.stall_penalty[0] = STALL_PENALTY;

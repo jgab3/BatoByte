@@ -21,7 +21,7 @@ typedef enum {
 
 typedef struct {
 	TurnOutcome outcome;
-	int round_winner; 
+	int round_winner;
 	int tick_damage[PLAYER_COUNT];
 	int move_damage[PLAYER_COUNT];
 	int stall_penalty[PLAYER_COUNT];
@@ -35,6 +35,7 @@ GameError game_pick_round_power(Game *game, int player, Power power);
 
 int power_matches_move(Power power, Move move);
 
-GameError resolve_turn(Game *game, const Move moves[PLAYER_COUNT], const Power use[PLAYER_COUNT], TurnResult *result);
+GameError resolve_turn(Game *game, const Move moves[PLAYER_COUNT],
+	const Power use[PLAYER_COUNT], TurnResult *result);
 
 #endif

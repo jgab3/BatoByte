@@ -430,7 +430,7 @@ int main(int argc, char *argv[])
 
 	while (match_winner < 0) {
 		while (1) {
-			
+
 			if (need_power_pick) {
 				int power_choice;
 				char extra;

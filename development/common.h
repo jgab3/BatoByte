@@ -22,7 +22,6 @@
 #define PLAYER_COUNT 2
 
 #define MAX_MESSAGE_LENGTH 512
-#define MAX_RELAY_LENGTH (MAX_MESSAGE_LENGTH + 16)
 #define HP_PER_BAR_CHAR 5
 
 typedef enum {
@@ -57,7 +56,6 @@ typedef struct {
 typedef struct {
 	Player players[PLAYER_COUNT];
 	int stall_turns;
-	int stall_enabled;
 	int round_number;
 	int match_winner;
 } Game;
