@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <termios.h>
 #include <unistd.h>
 
 static const char *move_names[MOVE_COUNT] = {
@@ -100,6 +101,7 @@ static int read_choice(const char *prompt, int minimum, int maximum,
 	char input[100];
 	char *end;
 	long number;
+	tcflush(STDIN_FILENO, TCIFLUSH);
 
 	while (1) {
 		printf("%s", prompt);
