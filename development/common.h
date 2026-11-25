@@ -23,6 +23,8 @@
 
 #define MAX_MESSAGE_LENGTH 512
 #define HP_PER_BAR_CHAR 5
+#define HP_YELLOW_LEVEL 50
+#define HP_RED_LEVEL 25
 
 /* ANSI color codes. */
 #define COLOR_RED "\033[31m"

@@ -217,11 +217,17 @@ static int get_loadout(const char *line, Power loadout[LOADOUT_SIZE])
 static void print_hp_bar(const char *label, int hp, int change, int poison, int bleed)
 {
 	int i;
+	const char *color = COLOR_GREEN;
 
+	if (hp <= HP_RED_LEVEL) {
+		color = COLOR_RED;
+	} else if (hp <= HP_YELLOW_LEVEL) {
+		color = COLOR_YELLOW;
+	}
 	printf("%-12s [", label);
 	for (i = 0; i < MAX_HP / HP_PER_BAR_CHAR; ++i) {
 		if (i * HP_PER_BAR_CHAR < hp) {
-			printf("#");
+			printf("%s#" COLOR_RESET, color);
 		} else {
 			printf("-");
 		}
@@ -239,15 +245,17 @@ static void print_hp_bar(const char *label, int hp, int change, int poison, int 
 	printf("\n");
 }
 
-static int choose_move(const Game *game, Move *move, Power *use)
+static int choose_move(const Game *game, int turn_number, Move *move, Power *use)
 {
 	const Player *me = &game->players[0];
 	const Player *other = &game->players[1];
 	int choice;
 	int activate = 2;
 
-	print_hp_bar("Your HP:", me->hp, 0, 0, 0);
-	print_hp_bar("Player 2 HP:", other->hp, 0, 0, 0);
+	if (turn_number == 1) {
+		print_hp_bar("Your HP:", me->hp, 0, 0, 0);
+		print_hp_bar("Player 2 HP:", other->hp, 0, 0, 0);
+	}
 	printf("Your round power: %s (use with %s, %s)\n",
 		power_names[me->round_power], power_moves[me->round_power],
 		me->power_activated ? "used" : "not used yet");
@@ -503,7 +511,7 @@ int main(int argc, char *argv[])
 				leave_match(client_sock, "Player 2 left the match. You win by forfeit!");
 			}
 			printf("\n----- Round %d | Turn %d -----\n", game.round_number, turn_number);
-			if (!choose_move(&game, &moves[0], &use[0])) {
+			if (!choose_move(&game, turn_number, &moves[0], &use[0])) {
 				leave_match(client_sock, "Input ended while choosing a move.");
 			}
 			printf("Waiting for Player 2 to choose a move ...\n");

@@ -279,11 +279,17 @@ static int choose_round_power(int socket_fd, char *line, size_t line_size)
 static void print_hp_bar(const char *label, int hp, int change, int poison, int bleed)
 {
 	int i;
+	const char *color = COLOR_GREEN;
 
+	if (hp <= HP_RED_LEVEL) {
+		color = COLOR_RED;
+	} else if (hp <= HP_YELLOW_LEVEL) {
+		color = COLOR_YELLOW;
+	}
 	printf("%-12s [", label);
 	for (i = 0; i < MAX_HP / HP_PER_BAR_CHAR; ++i) {
 		if (i * HP_PER_BAR_CHAR < hp) {
-			printf("#");
+			printf("%s#" COLOR_RESET, color);
 		} else {
 			printf("-");
 		}
@@ -319,8 +325,10 @@ static int choose_move(int socket_fd, const char *line, int hp[PLAYER_COUNT])
 		return 0;
 	}
 	printf("\n----- Round %d | Turn %d -----\n", round_number, turn_number);
-	print_hp_bar("Player 1 HP:", hp[0], 0, 0, 0);
-	print_hp_bar("Your HP:", hp[1], 0, 0, 0);
+	if (turn_number == 1) {
+		print_hp_bar("Player 1 HP:", hp[0], 0, 0, 0);
+		print_hp_bar("Your HP:", hp[1], 0, 0, 0);
+	}
 	if (power_code > 0) {
 		printf("Your round power: %s (use with %s, %s)\n",
 			power_names[power_code - 1], power_moves[power_code - 1],
