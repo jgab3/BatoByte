@@ -295,14 +295,16 @@ static void print_hp_bar(const char *label, int hp, int change, int poison, int 
 		}
 	}
 	printf("] %d/%d", hp, MAX_HP);
-	if (change != 0) {
-		printf(" (%+d)", change);
+	if (change < 0) {
+		printf(" " COLOR_RED "(%+d)" COLOR_RESET, change);
+	} else if (change > 0) {
+		printf(" " COLOR_GREEN "(%+d)" COLOR_RESET, change);
 	}
 	if (poison > 0) {
-		printf("  POISONED (%d)", poison);
+		printf("  " COLOR_YELLOW "POISONED (%d)" COLOR_RESET, poison);
 	}
 	if (bleed > 0) {
-		printf("  BLEEDING (%d)", bleed);
+		printf("  " COLOR_YELLOW "BLEEDING (%d)" COLOR_RESET, bleed);
 	}
 	printf("\n");
 }
