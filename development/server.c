@@ -214,7 +214,7 @@ static int get_loadout(const char *line, Power loadout[LOADOUT_SIZE])
 	return 1;
 }
 
-static void print_hp_bar(const char *label, int hp)
+static void print_hp_bar(const char *label, int hp, int change, int poison, int bleed)
 {
 	int i;
 
@@ -226,7 +226,17 @@ static void print_hp_bar(const char *label, int hp)
 			printf("-");
 		}
 	}
-	printf("] %d/%d\n", hp, MAX_HP);
+	printf("] %d/%d", hp, MAX_HP);
+	if (change != 0) {
+		printf(" (%+d)", change);
+	}
+	if (poison > 0) {
+		printf("  POISONED (%d)", poison);
+	}
+	if (bleed > 0) {
+		printf("  BLEEDING (%d)", bleed);
+	}
+	printf("\n");
 }
 
 static int choose_move(const Game *game, Move *move, Power *use)
@@ -236,8 +246,8 @@ static int choose_move(const Game *game, Move *move, Power *use)
 	int choice;
 	int activate = 2;
 
-	print_hp_bar("Your HP:", me->hp);
-	print_hp_bar("Player 2 HP:", other->hp);
+	print_hp_bar("Your HP:", me->hp, 0, 0, 0);
+	print_hp_bar("Player 2 HP:", other->hp, 0, 0, 0);
 	printf("Your round power: %s (use with %s, %s)\n",
 		power_names[me->round_power], power_moves[me->round_power],
 		me->power_activated ? "used" : "not used yet");
@@ -312,40 +322,42 @@ static void send_pick_prompt(int client_sock, const Game *game)
 	send_or_die(client_sock, line);
 }
 
+static void print_choice(const char *who, Move move, Power power)
+{
+	printf("%s: %s", who, move_names[move]);
+	if (power != PW_NONE) {
+		printf(" + " COLOR_YELLOW "%s" COLOR_RESET, power_names[power]);
+	}
+}
+
 static void print_result(const Move moves[PLAYER_COUNT], const Power use[PLAYER_COUNT],
 	const int damage[PLAYER_COUNT], const int hp[PLAYER_COUNT],
-	const int poison[PLAYER_COUNT], const int bleed[PLAYER_COUNT], int stall_penalty)
+	const int start_hp[PLAYER_COUNT], const int poison[PLAYER_COUNT],
+	const int bleed[PLAYER_COUNT], int stall_penalty)
 {
 	int player;
 
-	printf("\nYou used %s!\n", move_names[moves[0]]);
-	printf("Player 2 used %s!\n", move_names[moves[1]]);
+	printf("\n");
+	print_choice("You", moves[0], use[0]);
+	printf("   vs   ");
+	print_choice("Player 2", moves[1], use[1]);
+	printf("\n");
 	if (stall_penalty > 0) {
-		printf("Too much stalling! Both players lose %d HP.\n", stall_penalty);
+		printf(COLOR_RED "Too much stalling! Both players lose %d HP." COLOR_RESET "\n",
+			stall_penalty);
 	}
 	for (player = 0; player < PLAYER_COUNT; ++player) {
 		if (damage[player] > 0) {
-			printf("%s took %d damage.\n", player == 0 ? "You" : "Player 2", damage[player]);
+			printf(COLOR_RED "%s took %d damage!" COLOR_RESET "\n",
+				player == 0 ? "You" : "Player 2", damage[player]);
 		}
-		if (use[player] != PW_NONE) {
-			printf("%s activated %s!\n", player == 0 ? "You" : "Player 2",
-				power_names[use[player]]);
-			if (use[player] == PW_HEAL) {
-				printf("%s healed %d HP.\n", player == 0 ? "You" : "Player 2", HEAL_AMT);
-			}
-		}
-
-		printf("%s HP: %d\n", player == 0 ? "Your" : "Player 2", hp[player]);
-
-		if (poison[player] > 0) {
-			printf("%s poisoned for %d more turn(s).\n",
-				player == 0 ? "You are" : "Player 2 is", poison[player]);
-		}
-		if (bleed[player] > 0) {
-			printf("%s bleeding for %d more turn(s).\n",
-				player == 0 ? "You are" : "Player 2 is", bleed[player]);
+		if (use[player] == PW_HEAL) {
+			printf(COLOR_GREEN "%s healed %d HP." COLOR_RESET "\n",
+				player == 0 ? "You" : "Player 2", HEAL_AMT);
 		}
 	}
+	print_hp_bar("Your HP:", hp[0], hp[0] - start_hp[0], poison[0], bleed[0]);
+	print_hp_bar("Player 2 HP:", hp[1], hp[1] - start_hp[1], poison[1], bleed[1]);
 }
 
 int main(int argc, char *argv[])
@@ -358,6 +370,7 @@ int main(int argc, char *argv[])
 	int damage[PLAYER_COUNT];
 	int poison[PLAYER_COUNT];
 	int bleed[PLAYER_COUNT];
+	int start_hp[PLAYER_COUNT];
 	int match_winner = -1;
 	int player;
 	int need_power_pick = 1;
@@ -478,6 +491,8 @@ int main(int argc, char *argv[])
 
 				need_power_pick = 0;
 			}
+			start_hp[0] = game.players[0].hp;
+			start_hp[1] = game.players[1].hp;
 
 			snprintf(line, sizeof(line), "TURN %d %d %d %d %d %d\n",
 				game.players[0].hp, game.players[1].hp,
@@ -504,7 +519,7 @@ int main(int argc, char *argv[])
 			break;
 		}
 		++turn_number;
-		
+
 		for (player = 0; player < PLAYER_COUNT; ++player) {
 			damage[player] = result.tick_damage[player] + result.move_damage[player] +
 				result.stall_penalty[player];
@@ -521,7 +536,7 @@ int main(int argc, char *argv[])
 			need_power_pick = 1;
 		}
 
-		print_result(moves, use, damage, hp, poison, bleed, result.stall_penalty[0]);
+		print_result(moves, use, damage, hp, start_hp, poison, bleed, result.stall_penalty[0]);
 		if (result.round_winner >= 0) {
 			printf("%s won the round!\n", result.round_winner == 0 ? "You" : "Player 2");
 		}

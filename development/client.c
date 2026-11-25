@@ -276,7 +276,7 @@ static int choose_round_power(int socket_fd, char *line, size_t line_size)
 	}
 }
 
-static void print_hp_bar(const char *label, int hp)
+static void print_hp_bar(const char *label, int hp, int change, int poison, int bleed)
 {
 	int i;
 
@@ -288,12 +288,21 @@ static void print_hp_bar(const char *label, int hp)
 			printf("-");
 		}
 	}
-	printf("] %d/%d\n", hp, MAX_HP);
+	printf("] %d/%d", hp, MAX_HP);
+	if (change != 0) {
+		printf(" (%+d)", change);
+	}
+	if (poison > 0) {
+		printf("  POISONED (%d)", poison);
+	}
+	if (bleed > 0) {
+		printf("  BLEEDING (%d)", bleed);
+	}
+	printf("\n");
 }
 
-static int choose_move(int socket_fd, const char *line)
+static int choose_move(int socket_fd, const char *line, int hp[PLAYER_COUNT])
 {
-	int hp[PLAYER_COUNT];
 	int round_number;
 	int turn_number;
 	int power_code;
@@ -310,8 +319,8 @@ static int choose_move(int socket_fd, const char *line)
 		return 0;
 	}
 	printf("\n----- Round %d | Turn %d -----\n", round_number, turn_number);
-	print_hp_bar("Player 1 HP:", hp[0]);
-	print_hp_bar("Your HP:", hp[1]);
+	print_hp_bar("Player 1 HP:", hp[0], 0, 0, 0);
+	print_hp_bar("Your HP:", hp[1], 0, 0, 0);
 	if (power_code > 0) {
 		printf("Your round power: %s (use with %s, %s)\n",
 			power_names[power_code - 1], power_moves[power_code - 1],
@@ -340,7 +349,15 @@ static int choose_move(int socket_fd, const char *line)
 	return 1;
 }
 
-static int show_result(const char *line)
+static void print_choice(const char *who, int move, int power_code)
+{
+	printf("%s: %s", who, move_names[move]);
+	if (power_code > 0) {
+		printf(" + " COLOR_YELLOW "%s" COLOR_RESET, power_names[power_code - 1]);
+	}
+}
+
+static int show_result(const char *line, const int start_hp[PLAYER_COUNT])
 {
 	int moves[PLAYER_COUNT];
 	int power_code[PLAYER_COUNT];
@@ -363,35 +380,27 @@ static int show_result(const char *line)
 		return 0;
 	}
 
-	printf("\nPlayer 1 used %s!\n", move_names[moves[0]]);
-	printf("You used %s!\n", move_names[moves[1]]);
+	printf("\n");
+	print_choice("Player 1", moves[0], power_code[0]);
+	printf("   vs   ");
+	print_choice("You", moves[1], power_code[1]);
+	printf("\n");
 	if (stall_penalty > 0) {
-		printf("Too much stalling! Both players lose %d HP.\n", stall_penalty);
+		printf(COLOR_RED "Too much stalling! Both players lose %d HP." COLOR_RESET "\n",
+			stall_penalty);
 	}
 	for (player = 0; player < PLAYER_COUNT; ++player) {
 		if (damage[player] > 0) {
-			printf("%s took %d damage.\n", player == 0 ? "Player 1" : "You",
-				   damage[player]);
+			printf(COLOR_RED "%s took %d damage!" COLOR_RESET "\n",
+				player == 0 ? "Player 1" : "You", damage[player]);
 		}
-		if (power_code[player] > 0) {
-			printf("%s activated %s!\n", player == 0 ? "Player 1" : "You",
-				power_names[power_code[player] - 1]);
-			if (power_code[player] == PW_HEAL + 1) {
-				printf("%s healed %d HP.\n", player == 0 ? "Player 1" : "You", HEAL_AMT);
-			}
-		}
-
-		printf("%s HP: %d\n", player == 0 ? "Player 1" : "Your", hp[player]);
-
-		if (poison[player] > 0) {
-			printf("%s poisoned for %d more turn(s).\n",
-				player == 0 ? "Player 1 is" : "You are", poison[player]);
-		}
-		if (bleed[player] > 0) {
-			printf("%s bleeding for %d more turn(s).\n",
-				player == 0 ? "Player 1 is" : "You are", bleed[player]);
+		if (power_code[player] == PW_HEAL + 1) {
+			printf(COLOR_GREEN "%s healed %d HP." COLOR_RESET "\n",
+				player == 0 ? "Player 1" : "You", HEAL_AMT);
 		}
 	}
+	print_hp_bar("Player 1 HP:", hp[0], hp[0] - start_hp[0], poison[0], bleed[0]);
+	print_hp_bar("Your HP:", hp[1], hp[1] - start_hp[1], poison[1], bleed[1]);
 	if (round_winner > 0) {
 		printf("%s won the round!\n", round_winner == 2 ? "You" : "Player 1");
 	}
@@ -406,6 +415,7 @@ int main(int argc, char *argv[])
 	int client_sock;
 	int port_no;
 	int player_number;
+	int turn_hp[PLAYER_COUNT];
 	struct sockaddr_in server_addr;
 	struct hostent *server;
 	char line[MAX_MESSAGE_LENGTH];
@@ -466,7 +476,7 @@ int main(int argc, char *argv[])
 				break;
 			}
 		} else if (strncmp(line, "TURN ", 5) == 0) {
-			if (!choose_move(client_sock, line)) {
+			if (!choose_move(client_sock, line, turn_hp)) {
 				break;
 			}
 			if (!receive_line(client_sock, line, sizeof(line))) {
@@ -477,7 +487,7 @@ int main(int argc, char *argv[])
 				printf("Invalid choice. Choose again.\n");
 				continue;
 			}
-			if (strncmp(line, "RESULT ", 7) != 0 || !show_result(line) ||
+			if (strncmp(line, "RESULT ", 7) != 0 || !show_result(line, turn_hp) ||
 				!receive_line(client_sock, line, sizeof(line))) {
 				break;
 			}
