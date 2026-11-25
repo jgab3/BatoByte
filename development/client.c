@@ -294,7 +294,8 @@ static void print_hp_bar(const char *label, int hp)
 static int choose_move(int socket_fd, const char *line)
 {
 	int hp[PLAYER_COUNT];
-	int round_wins[PLAYER_COUNT];
+	int round_number;
+	int turn_number;
 	int power_code;
 	int activated;
 	int move;
@@ -303,12 +304,12 @@ static int choose_move(int socket_fd, const char *line)
 	char response[MAX_MESSAGE_LENGTH];
 
 	if (sscanf(line, "TURN %d %d %d %d %d %d", &hp[0], &hp[1], &power_code, &activated,
-			&round_wins[0], &round_wins[1]) != 6 ||
+			&round_number, &turn_number) != 6 ||
 		power_code < 0 || power_code > PW_COUNT ||
 		(activated != 0 && activated != 1)) {
 		return 0;
 	}
-	printf("\nRound wins: Player 1: %d | You: %d\n", round_wins[0], round_wins[1]);
+	printf("\n----- Round %d | Turn %d -----\n", round_number, turn_number);
 	print_hp_bar("Player 1 HP:", hp[0]);
 	print_hp_bar("Your HP:", hp[1]);
 	if (power_code > 0) {
@@ -454,9 +455,11 @@ int main(int argc, char *argv[])
 		}
 		if (strncmp(line, "ROUND ", 6) == 0) {
 			int round_number;
+			int score[PLAYER_COUNT];
 
-			if (sscanf(line, "ROUND %d", &round_number) == 1) {
-				printf("\nRound %d begins!\n", round_number);
+			if (sscanf(line, "ROUND %d %d %d", &round_number, &score[0], &score[1]) == 3) {
+				printf("\n==================== ROUND %d ====================\n", round_number);
+				printf("Score: You %d - %d Player 1\n", score[1], score[0]);
 			}
 		} else if (strncmp(line, "PICK ", 5) == 0) {
 			if (!choose_round_power(client_sock, line, sizeof(line))) {
@@ -483,8 +486,13 @@ int main(int argc, char *argv[])
 			}
 			if (strncmp(line, "END ", 4) == 0) {
 				int winner;
-				if (sscanf(line, "END %d", &winner) == 1) {
-					printf("%s the match!\n", winner == 2 ? "You win" : "Player 1 wins");
+				int score[PLAYER_COUNT];
+
+				if (sscanf(line, "END %d %d %d", &winner, &score[0], &score[1]) == 3) {
+					printf("\n=================================================\n");
+					printf("%s the match! Final score: You %d - %d Player 1\n",
+						winner == 2 ? "You win" : "Player 1 wins", score[1], score[0]);
+					printf("=================================================\n");
 				}
 				break;
 			}

@@ -24,6 +24,12 @@
 #define MAX_MESSAGE_LENGTH 512
 #define HP_PER_BAR_CHAR 5
 
+/* ANSI color codes. */
+#define COLOR_RED "\033[31m"
+#define COLOR_GREEN "\033[32m"
+#define COLOR_YELLOW "\033[33m"
+#define COLOR_RESET "\033[0m"
+
 typedef enum {
 	MOVE_ATTACK,
 	MOVE_DEFEND,

@@ -236,7 +236,6 @@ static int choose_move(const Game *game, Move *move, Power *use)
 	int choice;
 	int activate = 2;
 
-	printf("\nRound wins: You: %d | Player 2: %d\n", me->round_wins, other->round_wins);
 	print_hp_bar("Your HP:", me->hp);
 	print_hp_bar("Player 2 HP:", other->hp);
 	printf("Your round power: %s (use with %s, %s)\n",
@@ -362,6 +361,7 @@ int main(int argc, char *argv[])
 	int match_winner = -1;
 	int player;
 	int need_power_pick = 1;
+	int turn_number = 1;
 	socklen_t client_size;
 	struct sockaddr_in server_addr;
 	struct sockaddr_in client_addr;
@@ -442,8 +442,13 @@ int main(int argc, char *argv[])
 				int power_choice;
 				char extra;
 
-				printf("\nRound %d begins!\n", game.round_number);
-				snprintf(line, sizeof(line), "ROUND %d\n", game.round_number);
+				turn_number = 1;
+				printf("\n==================== ROUND %d ====================\n",
+					game.round_number);
+				printf("Score: You %d - %d Player 2\n", game.players[0].round_wins,
+					game.players[1].round_wins);
+				snprintf(line, sizeof(line), "ROUND %d %d %d\n", game.round_number,
+					game.players[0].round_wins, game.players[1].round_wins);
 				send_or_die(client_sock, line);
 				send_pick_prompt(client_sock, &game);
 
@@ -477,11 +482,12 @@ int main(int argc, char *argv[])
 			snprintf(line, sizeof(line), "TURN %d %d %d %d %d %d\n",
 				game.players[0].hp, game.players[1].hp,
 				game.players[1].round_power + 1, game.players[1].power_activated,
-				game.players[0].round_wins, game.players[1].round_wins);
+				game.round_number, turn_number);
 
 			if (!send_line(client_sock, line)) {
 				leave_match(client_sock, "Player 2 left the match. You win by forfeit!");
 			}
+			printf("\n----- Round %d | Turn %d -----\n", game.round_number, turn_number);
 			if (!choose_move(&game, &moves[0], &use[0])) {
 				leave_match(client_sock, "Input ended while choosing a move.");
 			}
@@ -497,7 +503,8 @@ int main(int argc, char *argv[])
 			}
 			break;
 		}
-
+		++turn_number;
+		
 		for (player = 0; player < PLAYER_COUNT; ++player) {
 			damage[player] = result.tick_damage[player] + result.move_damage[player] +
 				result.stall_penalty[player];
@@ -527,14 +534,19 @@ int main(int argc, char *argv[])
 			poison[0], poison[1], bleed[0], bleed[1], result.stall_penalty[0]);
 		send_or_die(client_sock, line);
 		if (match_winner >= 0) {
-			snprintf(line, sizeof(line), "END %d\n", match_winner);
+			snprintf(line, sizeof(line), "END %d %d %d\n", match_winner,
+				game.players[0].round_wins, game.players[1].round_wins);
 			send_or_die(client_sock, line);
 			break;
 		}
 		send_or_die(client_sock, "CONTINUE\n");
 	}
 
-	printf("%s the match!\n", match_winner == 1 ? "You win" : "Player 2 wins");
+	printf("\n=================================================\n");
+	printf("%s the match! Final score: You %d - %d Player 2\n",
+		match_winner == 1 ? "You win" : "Player 2 wins",
+		game.players[0].round_wins, game.players[1].round_wins);
+	printf("=================================================\n");
 	printf("Closing connection ...\n");
 	close(client_sock);
 	return EXIT_SUCCESS;
