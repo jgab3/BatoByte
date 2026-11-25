@@ -251,6 +251,7 @@ static int choose_move(const Game *game, int turn_number, Move *move, Power *use
 	const Player *other = &game->players[1];
 	int choice;
 	int activate = 2;
+	Move menu_move;
 
 	if (turn_number == 1) {
 		print_hp_bar("Your HP:", me->hp, 0, 0, 0);
@@ -259,7 +260,15 @@ static int choose_move(const Game *game, int turn_number, Move *move, Power *use
 	printf("Your round power: %s (use with %s, %s)\n",
 		power_names[me->round_power], power_moves[me->round_power],
 		me->power_activated ? "used" : "not used yet");
-	printf("1. Attack\n2. Defend\n3. Counter\n");
+	for (menu_move = MOVE_ATTACK; menu_move < MOVE_COUNT; menu_move = (Move)(menu_move + 1)) {
+		printf("%d. %s", menu_move + 1, move_names[menu_move]);
+		if (me->round_power != PW_NONE && !me->power_activated &&
+			power_matches_move(me->round_power, menu_move)) {
+			printf("  (" COLOR_YELLOW "%s" COLOR_RESET " available)",
+				power_names[me->round_power]);
+		}
+		printf("\n");
+	}
 	if (!read_choice("Choose your move: ", 1, MOVE_COUNT, &choice)) {
 		return 0;
 	}

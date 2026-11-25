@@ -316,6 +316,7 @@ static int choose_move(int socket_fd, const char *line, int hp[PLAYER_COUNT])
 	int move;
 	int activation = 0;
 	int choice;
+	int menu_move;
 	char response[MAX_MESSAGE_LENGTH];
 
 	if (sscanf(line, "TURN %d %d %d %d %d %d", &hp[0], &hp[1], &power_code, &activated,
@@ -334,7 +335,15 @@ static int choose_move(int socket_fd, const char *line, int hp[PLAYER_COUNT])
 			power_names[power_code - 1], power_moves[power_code - 1],
 			activated ? "used" : "not used yet");
 	}
-	printf("1. Attack\n2. Defend\n3. Counter\n");
+	for (menu_move = 0; menu_move < MOVE_COUNT; ++menu_move) {
+		printf("%d. %s", menu_move + 1, move_names[menu_move]);
+		if (power_code > 0 && !activated &&
+			power_matches_move((Power)(power_code - 1), (Move)menu_move)) {
+			printf("  (" COLOR_YELLOW "%s" COLOR_RESET " available)",
+				power_names[power_code - 1]);
+		}
+		printf("\n");
+	}
 	if (!read_choice("Choose your move: ", 1, MOVE_COUNT, &choice)) {
 		return 0;
 	}
