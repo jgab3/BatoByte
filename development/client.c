@@ -410,10 +410,12 @@ static int show_result(const char *line, const int start_hp[PLAYER_COUNT])
 	print_hp_bar("Player 1 HP:", hp[0], hp[0] - start_hp[0], poison[0], bleed[0]);
 	print_hp_bar("Your HP:", hp[1], hp[1] - start_hp[1], poison[1], bleed[1]);
 	if (round_winner > 0) {
-		printf("%s won the round!\n", round_winner == 2 ? "You" : "Player 1");
+		printf(COLOR_GREEN "%s won the round!" COLOR_RESET "\n",
+			round_winner == 2 ? "You" : "Player 1");
 	}
 	if (hp[0] == 0 && hp[1] == 0) {
-		printf("Double KO! No one wins this round. Replaying with full HP and powers restored.\n");
+		printf(COLOR_YELLOW "%s" COLOR_RESET "\n",
+			"Double KO! No one wins this round. Replaying with full HP and powers restored.");
 	}
 	return 1;
 }

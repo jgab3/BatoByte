@@ -546,10 +546,12 @@ int main(int argc, char *argv[])
 
 		print_result(moves, use, damage, hp, start_hp, poison, bleed, result.stall_penalty[0]);
 		if (result.round_winner >= 0) {
-			printf("%s won the round!\n", result.round_winner == 0 ? "You" : "Player 2");
+			printf(COLOR_GREEN "%s won the round!" COLOR_RESET "\n",
+				result.round_winner == 0 ? "You" : "Player 2");
 		}
 		if (result.outcome == TURN_MUTUAL_KO) {
-			printf("Double KO! No one wins this round. Replaying with full HP and powers restored.\n");
+			printf(COLOR_YELLOW "%s" COLOR_RESET "\n",
+				"Double KO! No one wins this round. Replaying with full HP and powers restored.");
 		}
 		snprintf(line, sizeof(line), "RESULT %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
 			moves[0], moves[1], use[0] + 1, use[1] + 1, damage[0], damage[1],
