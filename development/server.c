@@ -54,13 +54,6 @@ static int send_line(int socket_fd, const char *line)
 	return 1;
 }
 
-static void send_or_die(int socket_fd, const char *line)
-{
-	if (!send_line(socket_fd, line)) {
-		die_with_error("Error: send() Failed.");
-	}
-}
-
 static void leave_match(int socket_fd, const char *message)
 {
 	printf("%s\n", message);
@@ -73,6 +66,20 @@ static void win_by_forfeit(int socket_fd)
 	printf("Player 2 left the match. You win by forfeit!\n");
 	close(socket_fd);
 	exit(EXIT_SUCCESS);
+}
+
+static void send_or_die(int socket_fd, const char *line)
+{
+	if (!send_line(socket_fd, line)) {
+		leave_match(socket_fd, "Player 2 disconnected during loadout selection.");
+	}
+}
+
+static void send_or_forfeit(int socket_fd, const char *line)
+{
+	if (!send_line(socket_fd, line)) {
+		win_by_forfeit(socket_fd);
+	}
 }
 
 static int receive_line(int socket_fd, char *line, size_t size)
@@ -347,7 +354,7 @@ static void send_pick_prompt(int client_sock, const Game *game)
 	snprintf(line, sizeof(line), "PICK %d %d %d\n",
 		client->remaining_powers[0] + 1, client->remaining_powers[1] + 1,
 		client->remaining_powers[2] + 1);
-	send_or_die(client_sock, line);
+	send_or_forfeit(client_sock, line);
 }
 
 static void print_choice(const char *who, Move move, Power power)
@@ -489,7 +496,7 @@ int main(int argc, char *argv[])
 				game.players[1].round_wins);
 			snprintf(line, sizeof(line), "ROUND %d %d %d\n", game.round_number,
 				game.players[0].round_wins, game.players[1].round_wins);
-			send_or_die(client_sock, line);
+			send_or_forfeit(client_sock, line);
 			send_pick_prompt(client_sock, &game);
 
 			if (!choose_round_power(&game)) {
@@ -508,11 +515,11 @@ int main(int argc, char *argv[])
 					power_choice >= 1 && power_choice <= PW_COUNT &&
 					game_pick_round_power(
 						&game, 1, (Power)(power_choice - 1)) == GAME_OK) {
-					send_or_die(client_sock, "OK\n");
+					send_or_forfeit(client_sock, "OK\n");
 					break;
 				}
 
-				send_or_die(client_sock, "RETRY\n");
+				send_or_forfeit(client_sock, "RETRY\n");
 				send_pick_prompt(client_sock, &game);
 			}
 
@@ -543,7 +550,7 @@ int main(int argc, char *argv[])
 				resolve_turn(&game, moves, use, &result) == GAME_OK) {
 				break;
 			}
-			send_or_die(client_sock, "RETRY\n");
+			send_or_forfeit(client_sock, "RETRY\n");
 			if (!send_line(client_sock, turn_line)) {
 				win_by_forfeit(client_sock);
 			}
@@ -579,14 +586,14 @@ int main(int argc, char *argv[])
 			moves[0], moves[1], use[0] + 1, use[1] + 1, damage[0], damage[1],
 			hp[0], hp[1], result.round_winner + 1,
 			poison[0], poison[1], bleed[0], bleed[1], result.stall_penalty[0]);
-		send_or_die(client_sock, line);
+		send_or_forfeit(client_sock, line);
 		if (match_winner >= 0) {
 			snprintf(line, sizeof(line), "END %d %d %d\n", match_winner,
 				game.players[0].round_wins, game.players[1].round_wins);
-			send_or_die(client_sock, line);
+			send_line(client_sock, line);
 			break;
 		}
-		send_or_die(client_sock, "CONTINUE\n");
+		send_or_forfeit(client_sock, "CONTINUE\n");
 	}
 
 	printf("\n=================================================\n");
