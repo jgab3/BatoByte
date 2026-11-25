@@ -67,6 +67,13 @@ static void leave_match(int socket_fd, const char *message)
 	exit(EXIT_FAILURE);
 }
 
+static void win_by_forfeit(int socket_fd)
+{
+	printf("Player 2 left the match. You win by forfeit!\n");
+	close(socket_fd);
+	exit(EXIT_SUCCESS);
+}
+
 static int receive_line(int socket_fd, char *line, size_t size)
 {
 	size_t used = 0;
@@ -403,6 +410,7 @@ int main(int argc, char *argv[])
 	Power loadouts[PLAYER_COUNT][LOADOUT_SIZE];
 	TurnResult result;
 	char line[MAX_MESSAGE_LENGTH];
+	char turn_line[MAX_MESSAGE_LENGTH];
 
 	if (argc != 2) {
 		printf("Usage: %s port_no\n", argv[0]);
@@ -468,74 +476,75 @@ int main(int argc, char *argv[])
 	send_or_die(client_sock, "READY 2\n");
 
 	while (match_winner < 0) {
-		while (1) {
+		if (need_power_pick) {
+			int power_choice;
+			char extra;
 
-			if (need_power_pick) {
-				int power_choice;
-				char extra;
+			turn_number = 1;
+			printf("\n==================== ROUND %d ====================\n",
+				game.round_number);
+			printf("Score: You %d - %d Player 2\n", game.players[0].round_wins,
+				game.players[1].round_wins);
+			snprintf(line, sizeof(line), "ROUND %d %d %d\n", game.round_number,
+				game.players[0].round_wins, game.players[1].round_wins);
+			send_or_die(client_sock, line);
+			send_pick_prompt(client_sock, &game);
 
-				turn_number = 1;
-				printf("\n==================== ROUND %d ====================\n",
-					game.round_number);
-				printf("Score: You %d - %d Player 2\n", game.players[0].round_wins,
-					game.players[1].round_wins);
-				snprintf(line, sizeof(line), "ROUND %d %d %d\n", game.round_number,
-					game.players[0].round_wins, game.players[1].round_wins);
-				send_or_die(client_sock, line);
-				send_pick_prompt(client_sock, &game);
-
-				if (!choose_round_power(&game)) {
-					leave_match(client_sock, "Input ended while choosing a power.");
-				}
-
-				printf("Waiting for Player 2 to choose a power ...\n");
-				fflush(stdout);
-
-				while (1) {
-					if (!receive_line(client_sock, line, sizeof(line))) {
-						leave_match(client_sock, "Player 2 left the match. You win by forfeit!");
-					}
-
-					if (sscanf(line, "PICK %d %c", &power_choice, &extra) == 1 &&
-						power_choice >= 1 && power_choice <= PW_COUNT &&
-						game_pick_round_power(
-							&game, 1, (Power)(power_choice - 1)) == GAME_OK) {
-						send_or_die(client_sock, "OK\n");
-						break;
-					}
-
-					send_or_die(client_sock, "RETRY\n");
-					send_pick_prompt(client_sock, &game);
-				}
-
-				need_power_pick = 0;
+			if (!choose_round_power(&game)) {
+				leave_match(client_sock, "Input ended while choosing a power.");
 			}
-			start_hp[0] = game.players[0].hp;
-			start_hp[1] = game.players[1].hp;
 
-			snprintf(line, sizeof(line), "TURN %d %d %d %d %d %d\n",
-				game.players[0].hp, game.players[1].hp,
-				game.players[1].round_power + 1, game.players[1].power_activated,
-				game.round_number, turn_number);
-
-			if (!send_line(client_sock, line)) {
-				leave_match(client_sock, "Player 2 left the match. You win by forfeit!");
-			}
-			printf("\n----- Round %d | Turn %d -----\n", game.round_number, turn_number);
-			if (!choose_move(&game, turn_number, &moves[0], &use[0])) {
-				leave_match(client_sock, "Input ended while choosing a move.");
-			}
-			printf("Waiting for Player 2 to choose a move ...\n");
+			printf("Waiting for Player 2 to choose a power ...\n");
 			fflush(stdout);
-			if (!receive_line(client_sock, line, sizeof(line))) {
-				leave_match(client_sock, "Player 2 left the match. You win by forfeit!");
-			}
-			if (!get_move(line, &moves[1], &use[1]) ||
-				resolve_turn(&game, moves, use, &result) != GAME_OK) {
+
+			while (1) {
+				if (!receive_line(client_sock, line, sizeof(line))) {
+					win_by_forfeit(client_sock);
+				}
+
+				if (sscanf(line, "PICK %d %c", &power_choice, &extra) == 1 &&
+					power_choice >= 1 && power_choice <= PW_COUNT &&
+					game_pick_round_power(
+						&game, 1, (Power)(power_choice - 1)) == GAME_OK) {
+					send_or_die(client_sock, "OK\n");
+					break;
+				}
+
 				send_or_die(client_sock, "RETRY\n");
-				continue;
+				send_pick_prompt(client_sock, &game);
 			}
-			break;
+
+			need_power_pick = 0;
+		}
+		start_hp[0] = game.players[0].hp;
+		start_hp[1] = game.players[1].hp;
+
+		snprintf(turn_line, sizeof(turn_line), "TURN %d %d %d %d %d %d\n",
+			game.players[0].hp, game.players[1].hp,
+			game.players[1].round_power + 1, game.players[1].power_activated,
+			game.round_number, turn_number);
+
+		if (!send_line(client_sock, turn_line)) {
+			win_by_forfeit(client_sock);
+		}
+		printf("\n----- Round %d | Turn %d -----\n", game.round_number, turn_number);
+		if (!choose_move(&game, turn_number, &moves[0], &use[0])) {
+			leave_match(client_sock, "Input ended while choosing a move.");
+		}
+		printf("Waiting for Player 2 to choose a move ...\n");
+		fflush(stdout);
+		while (1) {
+			if (!receive_line(client_sock, line, sizeof(line))) {
+				win_by_forfeit(client_sock);
+			}
+			if (get_move(line, &moves[1], &use[1]) &&
+				resolve_turn(&game, moves, use, &result) == GAME_OK) {
+				break;
+			}
+			send_or_die(client_sock, "RETRY\n");
+			if (!send_line(client_sock, turn_line)) {
+				win_by_forfeit(client_sock);
+			}
 		}
 		++turn_number;
 
