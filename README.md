@@ -8,7 +8,6 @@ terminal; the other player runs the client and connects to the server over TCP.
 The source files are in the `development` folder. Build from there:
 
 ```bash
-cd development
 gcc game.c server.c -o server
 gcc client.c -o client
 ```
